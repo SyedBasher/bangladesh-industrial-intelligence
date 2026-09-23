@@ -7,7 +7,18 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Mapping
 
+from .admin_geography import (
+    AdminLevel,
+    AdminUnit,
+    AdministrativeGeographyCrosswalk,
+    GeoAlias,
+)
 from .analytical_intelligence import UniverseKind, cluster_context
+from .ddm_aware import (
+    DDM_AWARE_SOURCE_NAME,
+    ddm_records_to_exposure_observations,
+    parse_ddm_aware_risk_html,
+)
 from .national_product import (
     build_national_dashboard_payload,
     build_national_registry_rows,
@@ -656,6 +667,53 @@ CREATE INDEX IF NOT EXISTS national_ingest_mode_idx
     ON national_ingest_sources(ingest_mode, imported_at DESC);
 
 
+CREATE TABLE IF NOT EXISTS admin_geography_units (
+    geo_ref TEXT PRIMARY KEY,
+    level TEXT NOT NULL CHECK(level IN ('DIVISION','DISTRICT','UPAZILA')),
+    division_code TEXT NOT NULL,
+    division_name_en TEXT NOT NULL,
+    division_name_bn TEXT,
+    district_code TEXT,
+    district_name_en TEXT,
+    district_name_bn TEXT,
+    upazila_code TEXT,
+    upazila_name_en TEXT,
+    upazila_name_bn TEXT,
+    source_name TEXT NOT NULL,
+    source_vintage TEXT
+);
+
+CREATE TABLE IF NOT EXISTS admin_geography_aliases (
+    alias_id INTEGER PRIMARY KEY,
+    level TEXT NOT NULL CHECK(level IN ('DIVISION','DISTRICT','UPAZILA')),
+    alias TEXT NOT NULL,
+    normalized_alias TEXT NOT NULL,
+    geo_ref TEXT NOT NULL REFERENCES admin_geography_units(geo_ref),
+    source_name TEXT NOT NULL,
+    note TEXT NOT NULL,
+    UNIQUE(level, normalized_alias, geo_ref)
+);
+
+CREATE TABLE IF NOT EXISTS ddm_aware_import_runs (
+    import_id INTEGER PRIMARY KEY,
+    source_name TEXT NOT NULL,
+    source_reference TEXT,
+    source_vintage TEXT,
+    observed_at TEXT NOT NULL,
+    imported_at TEXT NOT NULL,
+    source_records INTEGER NOT NULL,
+    mapped_districts INTEGER NOT NULL,
+    observations_staged INTEGER NOT NULL,
+    unresolved_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS admin_geography_level_idx
+    ON admin_geography_units(level, division_code, district_code, upazila_code);
+CREATE INDEX IF NOT EXISTS admin_geography_alias_idx
+    ON admin_geography_aliases(level, normalized_alias);
+CREATE INDEX IF NOT EXISTS ddm_aware_import_time_idx
+    ON ddm_aware_import_runs(imported_at DESC);
+
 CREATE TABLE IF NOT EXISTS spatial_exposure_sources (
     source_name TEXT PRIMARY KEY,
     authority TEXT NOT NULL,
@@ -668,7 +726,8 @@ CREATE TABLE IF NOT EXISTS spatial_exposure_observations (
     exposure_observation_id INTEGER PRIMARY KEY,
     source_name TEXT NOT NULL REFERENCES spatial_exposure_sources(source_name),
     domain TEXT NOT NULL CHECK(domain IN (
-        'CLIMATE_HAZARD','TRANSPORT_ACCESS','POWER_SYSTEM','ENVIRONMENTAL_REGULATORY'
+        'CLIMATE_HAZARD','DISASTER_RISK','TRANSPORT_ACCESS',
+        'POWER_SYSTEM','ENVIRONMENTAL_REGULATORY'
     )),
     metric_code TEXT NOT NULL,
     metric_label TEXT NOT NULL,
@@ -685,6 +744,9 @@ CREATE TABLE IF NOT EXISTS spatial_exposure_observations (
     source_vintage TEXT,
     observed_at TEXT,
     evidence_note TEXT,
+    canonical_geo_ref TEXT,
+    geography_match_type TEXT,
+    source_geography_label TEXT,
     observation_sha256 TEXT NOT NULL,
     UNIQUE(source_name, observation_sha256)
 );
@@ -4176,6 +4238,9 @@ class LocalValidationStore:
                     "source_vintage": obs.source_vintage,
                     "observed_at": obs.observed_at,
                     "evidence_note": obs.evidence_note,
+                    "canonical_geo_ref": obs.canonical_geo_ref,
+                    "geography_match_type": obs.geography_match_type,
+                    "source_geography_label": obs.source_geography_label,
                 }
                 observation_sha256 = sha256_text(
                     json.dumps(
@@ -4191,8 +4256,9 @@ class LocalValidationStore:
                            spatial_scope, establishment_ref, district, upazila,
                            value_text, value_numeric, unit, direction,
                            source_vintage, observed_at, evidence_note,
-                           observation_sha256
-                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                           canonical_geo_ref, geography_match_type,
+                           source_geography_label, observation_sha256
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         obs.source,
                         obs.domain.value,
@@ -4209,6 +4275,9 @@ class LocalValidationStore:
                         obs.source_vintage,
                         obs.observed_at,
                         obs.evidence_note,
+                        obs.canonical_geo_ref,
+                        obs.geography_match_type,
+                        obs.source_geography_label,
                         observation_sha256,
                     ),
                 )
@@ -4222,7 +4291,9 @@ class LocalValidationStore:
             """SELECT source_name AS source, domain, metric_code, metric_label,
                       spatial_scope, establishment_ref, district, upazila,
                       value_text, value_numeric, unit, direction,
-                      source_vintage, observed_at, evidence_note
+                      source_vintage, observed_at, evidence_note,
+                      canonical_geo_ref, geography_match_type,
+                      source_geography_label
                FROM spatial_exposure_observations
                ORDER BY source_name, domain, metric_code, spatial_scope,
                         district, upazila, establishment_ref""",
