@@ -41,6 +41,10 @@ from .external_sources import (
     source_spec,
 )
 from .hashutil import sha256_text
+from .intelligence_observations import (
+    ObservationScope,
+    extract_typed_observations,
+)
 from .parsers import extract_public_id, parse_dife_detail, parse_dife_list_page
 from .policy import SourceAccessPolicy
 from .sampling import ValidationCandidate
@@ -310,6 +314,41 @@ CREATE TABLE IF NOT EXISTS external_record_versions (
     observed_at TEXT NOT NULL,
     UNIQUE(external_record_id, content_sha256)
 );
+
+
+CREATE TABLE IF NOT EXISTS external_typed_observations (
+    typed_observation_id INTEGER PRIMARY KEY,
+    external_version_id INTEGER NOT NULL REFERENCES external_record_versions(external_version_id),
+    source_name TEXT NOT NULL,
+    observation_type TEXT NOT NULL,
+    scope TEXT NOT NULL CHECK(scope IN ('SITE','ORGANIZATION')),
+    value_text TEXT,
+    value_numeric REAL,
+    unit TEXT,
+    raw_label TEXT NOT NULL,
+    raw_value TEXT NOT NULL,
+    source_updated_at_raw TEXT,
+    observed_at TEXT NOT NULL,
+    observation_sha256 TEXT NOT NULL,
+    UNIQUE(external_version_id, observation_sha256)
+);
+
+CREATE TABLE IF NOT EXISTS linked_intelligence_observations (
+    linked_intelligence_id INTEGER PRIMARY KEY,
+    entity_link_id INTEGER NOT NULL REFERENCES entity_links(entity_link_id),
+    typed_observation_id INTEGER NOT NULL REFERENCES external_typed_observations(typed_observation_id),
+    validation_label TEXT NOT NULL,
+    dife_public_id INTEGER NOT NULL REFERENCES establishments(dife_public_id),
+    display_scope TEXT NOT NULL CHECK(display_scope IN ('SITE','ORGANIZATION')),
+    site_attributable INTEGER NOT NULL,
+    linked_at TEXT NOT NULL,
+    UNIQUE(entity_link_id, typed_observation_id)
+);
+
+CREATE INDEX IF NOT EXISTS typed_observation_version_idx
+    ON external_typed_observations(external_version_id, observation_type, scope);
+CREATE INDEX IF NOT EXISTS linked_intelligence_establishment_idx
+    ON linked_intelligence_observations(validation_label, dife_public_id, linked_intelligence_id);
 
 CREATE TABLE IF NOT EXISTS enrichment_targets (
     validation_label TEXT NOT NULL,
@@ -1790,12 +1829,63 @@ class LocalValidationStore:
                 (external_record_id, content_hash),
             ).fetchone()[0]
         )
+
+        typed_observations = extract_typed_observations(payload)
+        with self.conn:
+            for observation in typed_observations:
+                fingerprint = {
+                    "observation_type": observation.observation_type,
+                    "scope": str(observation.scope),
+                    "value_text": observation.value_text,
+                    "value_numeric": observation.value_numeric,
+                    "unit": observation.unit,
+                    "raw_label": observation.raw_label,
+                    "raw_value": observation.raw_value,
+                }
+                observation_hash = sha256_text(
+                    json.dumps(
+                        fingerprint,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                )
+                self.conn.execute(
+                    """INSERT OR IGNORE INTO external_typed_observations(
+                           external_version_id, source_name, observation_type, scope,
+                           value_text, value_numeric, unit, raw_label, raw_value,
+                           source_updated_at_raw, observed_at, observation_sha256
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        version_id,
+                        payload.source_name,
+                        observation.observation_type,
+                        str(observation.scope),
+                        observation.value_text,
+                        observation.value_numeric,
+                        observation.unit,
+                        observation.raw_label,
+                        observation.raw_value,
+                        payload.source_updated_at_raw,
+                        retrieved_at,
+                        observation_hash,
+                    ),
+                )
+
+        typed_count = int(
+            self.conn.execute(
+                """SELECT COUNT(*) FROM external_typed_observations
+                   WHERE external_version_id=?""",
+                (version_id,),
+            ).fetchone()[0]
+        )
         return {
             "external_record_id": external_record_id,
             "external_version_id": version_id,
             "source_name": payload.source_name,
             "external_key": payload.external_key,
             "content_sha256": content_hash,
+            "typed_observations": typed_count,
         }
 
     def _dife_match_record(
@@ -1876,6 +1966,131 @@ class LocalValidationStore:
             source_fields=json.loads(str(row["source_fields_json"])),
         )
 
+    def _attach_typed_observations_to_link(
+        self,
+        entity_link_id: int,
+        *,
+        validation_label: str,
+        dife_public_id: int,
+        external_record_id: int,
+        match_type: str,
+        site_level_match: bool,
+        linked_at: str,
+    ) -> int:
+        """Attach only typed observations permitted by the validated linkage scope."""
+        if match_type not in {"EXACT_SITE", "PROBABLE_SITE", "ORGANIZATION_ONLY"}:
+            return 0
+
+        latest = self.conn.execute(
+            """SELECT external_version_id
+               FROM external_record_versions
+               WHERE external_record_id=?
+               ORDER BY observed_at DESC, external_version_id DESC
+               LIMIT 1""",
+            (external_record_id,),
+        ).fetchone()
+        if latest is None:
+            return 0
+
+        rows = self.conn.execute(
+            """SELECT typed_observation_id, scope
+               FROM external_typed_observations
+               WHERE external_version_id=?
+               ORDER BY typed_observation_id""",
+            (int(latest["external_version_id"]),),
+        ).fetchall()
+
+        linked = 0
+        for row in rows:
+            scope = str(row["scope"])
+            if scope == str(ObservationScope.SITE) and not site_level_match:
+                continue
+            before = self.conn.total_changes
+            self.conn.execute(
+                """INSERT OR IGNORE INTO linked_intelligence_observations(
+                       entity_link_id, typed_observation_id, validation_label,
+                       dife_public_id, display_scope, site_attributable, linked_at
+                   ) VALUES(?,?,?,?,?,?,?)""",
+                (
+                    entity_link_id,
+                    int(row["typed_observation_id"]),
+                    validation_label,
+                    dife_public_id,
+                    scope,
+                    int(scope == str(ObservationScope.SITE) and site_level_match),
+                    linked_at,
+                ),
+            )
+            if self.conn.total_changes > before:
+                linked += 1
+        return linked
+
+    def intelligence_for_establishment(
+        self,
+        validation_label: str,
+        dife_public_id: int,
+    ) -> list[dict[str, object]]:
+        """Return typed intelligence from the latest validated link per source."""
+        rows = self.conn.execute(
+            """WITH latest_links AS (
+                   SELECT el.*,
+                          ROW_NUMBER() OVER(
+                              PARTITION BY el.validation_label, el.dife_public_id, el.source_name
+                              ORDER BY el.created_at DESC, el.entity_link_id DESC
+                          ) AS rn
+                   FROM entity_links el
+                   WHERE el.validation_label=? AND el.dife_public_id=?
+               )
+               SELECT
+                   li.linked_intelligence_id,
+                   ll.source_name,
+                   ll.match_type,
+                   ll.site_level_match,
+                   t.observation_type,
+                   t.scope AS source_scope,
+                   li.display_scope,
+                   li.site_attributable,
+                   t.value_text,
+                   t.value_numeric,
+                   t.unit,
+                   t.raw_label,
+                   t.raw_value,
+                   t.source_updated_at_raw,
+                   t.observed_at
+               FROM latest_links ll
+               JOIN linked_intelligence_observations li
+                 ON li.entity_link_id=ll.entity_link_id
+               JOIN external_typed_observations t
+                 ON t.typed_observation_id=li.typed_observation_id
+               WHERE ll.rn=1
+               ORDER BY ll.source_name, t.observation_type, t.typed_observation_id""",
+            (validation_label, dife_public_id),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def establishment_intelligence_profile(
+        self,
+        validation_label: str,
+        dife_public_id: int,
+    ) -> dict[str, object]:
+        dife = self._dife_match_record(validation_label, dife_public_id)
+        observations = self.intelligence_for_establishment(
+            validation_label,
+            dife_public_id,
+        )
+        grouped: dict[str, list[dict[str, object]]] = {}
+        for observation in observations:
+            grouped.setdefault(str(observation["observation_type"]), []).append(observation)
+        return {
+            "dife_public_id": dife.public_id,
+            "name": dife.name,
+            "address": dife.address,
+            "district": dife.district,
+            "upazila": dife.upazila,
+            "sector_family": dife.sector_family,
+            "intelligence": grouped,
+        }
+
     def review_external_link(
         self,
         validation_label: str,
@@ -1946,10 +2161,20 @@ class LocalValidationStore:
                    WHERE validation_label=? AND source_name=? AND dife_public_id=?""",
                 (validation_label, external.source_name, dife_public_id),
             )
+            typed_linked = self._attach_typed_observations_to_link(
+                link_id,
+                validation_label=validation_label,
+                dife_public_id=dife_public_id,
+                external_record_id=external_record_id,
+                match_type=str(decision.match_type),
+                site_level_match=decision.site_level_match,
+                linked_at=reviewed_at,
+            )
         return {
             "entity_link_id": link_id,
             "match_type": str(decision.match_type),
             "site_level_match": decision.site_level_match,
+            "typed_observations_linked": typed_linked,
         }
 
     def enrichment_coverage(

@@ -207,8 +207,8 @@ tbody tr:hover,tbody tr.selected{background:#f0f7f3}
         </div>
         <div class="card kpi">
           <div class="eyebrow">Current build</div>
-          <strong>v0.16</strong>
-          <span>Detail orchestration + product preview</span>
+          <strong>v0.17</strong>
+          <span>Typed evidence + scoped intelligence</span>
         </div>
       </div>
     </section>
@@ -315,7 +315,7 @@ const records=[
   {
     id:"DEMO-001",name:"Example Knitwear Ltd.",sector:"RMG & textiles",district:"Gazipur",
     upazila:"Tongi",status:"Registered",type:"Factory",workers:"1,240",capacity:"220k dozen/year",
-    product:"Knit garments",sources:["DIFE","BGMEA","EPB"],
+    product:"Knit garments",machines:"420",hs:"6109 · 6110",markets:"Germany · UK · USA",certs:"LEED · WRAP",vintage:"BGMEA 2026-08 · EPB 2026-09",sources:["DIFE","BGMEA","EPB"],
     evidence:[
       ["DIFE","Official site","Registered"],
       ["BGMEA","Probable site","Factory profile"],
@@ -325,7 +325,7 @@ const records=[
   {
     id:"DEMO-002",name:"Delta Foods Processing Ltd.",sector:"Food & agro",district:"Narayanganj",
     upazila:"Rupganj",status:"Registered",type:"Factory",workers:"380",capacity:"Source pending",
-    product:"Processed foods",sources:["DIFE","EPB","DoE"],
+    product:"Processed foods",machines:"86",hs:"1905 · 2007",markets:"India · UAE",certs:"Source pending",vintage:"EPB 2026-09",sources:["DIFE","EPB","DoE"],
     evidence:[
       ["DIFE","Official site","Registered"],
       ["EPB","Probable site","Exporter evidence"],
@@ -335,7 +335,7 @@ const records=[
   {
     id:"DEMO-003",name:"Metro Engineering Works",sector:"Engineering & materials",district:"Chattogram",
     upazila:"Sitakunda",status:"Registered",type:"Industrial establishment",workers:"210",capacity:"Source pending",
-    product:"Fabricated metal products",sources:["DIFE","BEPZA"],
+    product:"Fabricated metal products",machines:"Source pending",hs:"Organization evidence pending",markets:"Source pending",certs:"Source pending",vintage:"BEPZA demo vintage",sources:["DIFE","BEPZA"],
     evidence:[
       ["DIFE","Official site","Registered"],
       ["BEPZA","Organization","Enterprise evidence"]
@@ -344,7 +344,7 @@ const records=[
   {
     id:"DEMO-004",name:"Eastern Footwear Industries",sector:"Leather & footwear",district:"Gazipur",
     upazila:"Kaliakair",status:"Registered",type:"Factory",workers:"860",capacity:"1.8m pairs/year",
-    product:"Leather footwear",sources:["DIFE","EPB"],
+    product:"Leather footwear",machines:"170",hs:"6403 · 6404",markets:"Japan · EU",certs:"ISO 9001",vintage:"EPB 2026-09",sources:["DIFE","EPB"],
     evidence:[
       ["DIFE","Official site","Registered"],
       ["EPB","Probable site","Exporter + product evidence"]
@@ -363,7 +363,7 @@ let selected=records[0].id;
 function filtered(){
   const q=search.value.trim().toLowerCase();
   return records.filter(r=>{
-    const hay=[r.name,r.sector,r.district,r.upazila,r.product,r.sources.join(" ")].join(" ").toLowerCase();
+    const hay=[r.name,r.sector,r.district,r.upazila,r.product,r.hs,r.markets,r.certs,r.sources.join(" ")].join(" ").toLowerCase();
     return (!q||hay.includes(q)) &&
       (!sector.value||r.sector===sector.value) &&
       (!district.value||r.district===district.value);
@@ -382,8 +382,13 @@ function renderDetail(r){
       <div class="fact"><label>Sector</label><strong>${r.sector}</strong></div>
       <div class="fact"><label>Establishment type</label><strong>${r.type}</strong></div>
       <div class="fact"><label>Employment</label><strong>${r.workers}</strong></div>
-      <div class="fact"><label>Capacity</label><strong>${r.capacity}</strong></div>
+      <div class="fact"><label>Machines · site</label><strong>${r.machines}</strong></div>
+      <div class="fact"><label>Capacity · site</label><strong>${r.capacity}</strong></div>
       <div class="fact"><label>Principal product</label><strong>${r.product}</strong></div>
+      <div class="fact"><label>HS codes · organization</label><strong>${r.hs}</strong></div>
+      <div class="fact"><label>Export markets · organization</label><strong>${r.markets}</strong></div>
+      <div class="fact"><label>Certifications · site</label><strong>${r.certs}</strong></div>
+      <div class="fact"><label>Source vintage</label><strong>${r.vintage}</strong></div>
       <div class="fact"><label>Evidence sources</label><strong>${r.sources.length}</strong></div>
     </div>
     <div class="rule"></div>
@@ -395,7 +400,7 @@ function renderDetail(r){
         </div>`).join("")}
     </div>
     <div class="rule"></div>
-    <div class="small">Production design: every displayed field will carry source, observation date and linkage scope. External evidence never overwrites the DIFE observation.</div>
+    <div class="small">Production design: site-scoped fields can be attributed to this establishment only after a site-level match. Organization-scoped export evidence remains labeled as organization evidence.</div>
   `;
 }
 
