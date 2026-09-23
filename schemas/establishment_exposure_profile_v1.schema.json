@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mangrove-intelligence.example/schemas/establishment_exposure_profile_v1.schema.json",
+  "title": "Bangladesh Industrial Intelligence Establishment Exposure Profile v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "establishment",
+    "coverage",
+    "exposures",
+    "method"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "establishment": {
+      "type": "object"
+    },
+    "coverage": {
+      "type": "object"
+    },
+    "exposures": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "method": {
+      "type": "object"
+    }
+  }
+}

@@ -161,6 +161,7 @@ tbody tr:hover,tbody tr.selected{background:#f0f7f3}
       <a class="active" href="#overview">Overview</a>
       <a href="#national">National geography</a>
       <a href="#profiles">District / sector profiles</a>
+      <a href="#exposure">Exposure context</a>
       <a href="#registry">Establishments</a>
       <a href="#sources">Source pipeline</a>
       <a href="#method">Methodology</a>
@@ -209,8 +210,8 @@ tbody tr:hover,tbody tr.selected{background:#f0f7f3}
         </div>
         <div class="card kpi">
           <div class="eyebrow">Current build</div>
-          <strong>v0.23</strong>
-          <span>District + sector national profiles</span>
+          <strong>v0.24</strong>
+          <span>First-order spatial exposure intelligence</span>
         </div>
       </div>
     </section>
@@ -223,7 +224,7 @@ tbody tr:hover,tbody tr.selected{background:#f0f7f3}
         </div>
       </div>
       <div class="grid pipeline">
-        <div class="card pipe"><div class="source">DIFE</div><div class="state">National profiles + drill-down ready</div></div>
+        <div class="card pipe"><div class="source">DIFE</div><div class="state">National profiles + exposure linkage ready</div></div>
         <div class="card pipe"><div class="source">BGMEA</div><div class="state">Index + detail ready</div></div>
         <div class="card pipe"><div class="source">EPB</div><div class="state">Index + detail ready</div></div>
         <div class="card pipe"><div class="source">BKMEA</div><div class="state">Adapter ready</div></div>
@@ -344,6 +345,101 @@ tbody tr:hover,tbody tr.selected{background:#f0f7f3}
       </div>
       <div class="small" style="margin-top:9px">
         Profiles are built from the safe national dashboard and registry contracts. Exact national-registry coverage does not imply complete BGMEA, EPB, DoE or DIFE detail-page enrichment.
+      </div>
+    </section>
+
+
+    <section class="section" id="exposure">
+      <div class="section-head">
+        <div>
+          <h2>First-order exposure context</h2>
+          <p>Synthetic examples showing how site, upazila and district evidence remain distinct.</p>
+        </div>
+        <span class="badge demo">SYNTHETIC EXPOSURE VIEW</span>
+      </div>
+
+      <div class="grid kpis" style="margin-top:0">
+        <div class="card kpi">
+          <div class="eyebrow">Domains</div>
+          <strong>4</strong>
+          <span>Climate · transport · power · environmental</span>
+        </div>
+        <div class="card kpi">
+          <div class="eyebrow">Spatial scopes</div>
+          <strong>3</strong>
+          <span>Site · upazila · district</span>
+        </div>
+        <div class="card kpi">
+          <div class="eyebrow">Weighting</div>
+          <strong>Count</strong>
+          <span>Establishments, not employment/output</span>
+        </div>
+        <div class="card kpi">
+          <div class="eyebrow">Composite score</div>
+          <strong>None</strong>
+          <span>Metrics remain source-specific</span>
+        </div>
+      </div>
+
+      <div class="card table-card">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Metric</th>
+                <th>Domain</th>
+                <th>Scope</th>
+                <th>Attribution</th>
+                <th>Example value</th>
+                <th>Interpretation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Flood-context class</td>
+                <td>Climate hazard</td>
+                <td>District</td>
+                <td><span class="badge info">DISTRICT_CONTEXT</span></td>
+                <td>Elevated</td>
+                <td>Area context, not proof the factory flooded</td>
+              </tr>
+              <tr>
+                <td>Reported outage hours</td>
+                <td>Power system</td>
+                <td>Upazila</td>
+                <td><span class="badge info">UPAZILA_CONTEXT</span></td>
+                <td>4.5 hours/month</td>
+                <td>Local-system context, not site outage history</td>
+              </tr>
+              <tr>
+                <td>Travel time to port</td>
+                <td>Transport access</td>
+                <td>Site</td>
+                <td><span class="badge good">SITE_SPECIFIC</span></td>
+                <td>90 minutes</td>
+                <td>Directly attributable only when the site reference is explicit</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="grid" style="grid-template-columns:repeat(3,minmax(0,1fr));margin-top:14px">
+        <div class="card">
+          <div class="eyebrow">Evidence coverage</div>
+          <h3 style="margin:8px 0 6px;font-size:15px">Not risk prevalence</h3>
+          <p class="small" style="line-height:1.6">100% coverage means every establishment has linked evidence. It does not mean every establishment is harmed or exposed at the same intensity.</p>
+        </div>
+        <div class="card">
+          <div class="eyebrow">Area context</div>
+          <h3 style="margin:8px 0 6px;font-size:15px">Scope remains visible</h3>
+          <p class="small" style="line-height:1.6">District and upazila metrics remain contextual. They are never relabeled as site-specific observations.</p>
+        </div>
+        <div class="card">
+          <div class="eyebrow">Propagation</div>
+          <h3 style="margin:8px 0 6px;font-size:15px">No supply-chain inference yet</h3>
+          <p class="small" style="line-height:1.6">Co-location alone does not establish supplier, customer or input-output dependence. Second-order exposure waits for actual network evidence.</p>
+        </div>
       </div>
     </section>
 
@@ -603,7 +699,61 @@ function render(){
   }));
   renderDetail(data.find(r=>r.id===selected));
 }
-[search,sector,district].forEach(el=>el.addEventListener("input",render));\n\nconst profileType=document.getElementById("profileType");\nconst profileChoice=document.getElementById("profileChoice");\nconst profileSummary=document.getElementById("profileSummary");\nconst profileHead=document.getElementById("profileHead");\nconst profileRows=document.getElementById("profileRows");\n\nfunction profileDataset(){\n  return profileType.value==="district" ? demoDistrictProfiles : demoSectorProfiles;\n}\nfunction populateProfileChoices(){\n  const data=profileDataset();\n  profileChoice.innerHTML=Object.keys(data).map(function(name){return "<option>"+name+"</option>";}).join("");\n  renderProfile();\n}\nfunction renderProfile(){\n  const data=profileDataset();\n  const name=profileChoice.value || Object.keys(data)[0];\n  const p=data[name];\n  if(!p) return;\n  const isDistrict=profileType.value==="district";\n  if(isDistrict){\n    profileSummary.innerHTML="<div class=\"eyebrow\">District profile · synthetic</div>"+\n      "<h3 style=\"margin:6px 0 14px\">"+name+"</h3>"+\n      "<div class=\"fact-grid\">"+\n      "<div class=\"fact\"><label>Establishments</label><strong>"+p.establishments+"</strong></div>"+\n      "<div class=\"fact\"><label>National share</label><strong>"+p.share+"</strong></div>"+\n      "<div class=\"fact\"><label>Sector mapping coverage</label><strong>"+p.mapping+"</strong></div>"+\n      "<div class=\"fact\"><label>Upazilas represented</label><strong>"+p.upazilas+"</strong></div>"+\n      "<div class=\"fact\"><label>Concentration</label><strong>"+p.concentration+"</strong></div>"+\n      "<div class=\"fact\"><label>Drill-down</label><strong>"+p.drill+"</strong></div></div>"+\n      "<div class=\"rule\"></div><div class=\"small\">Location quotient above 1 means a sector has a larger share of establishments in this district than it has nationally. It is not a competitiveness score.</div>";\n    profileHead.innerHTML="<tr><th>Sector family</th><th>Establishments</th><th>Share of district</th><th>Share of national sector</th><th>LQ</th></tr>";\n  }else{\n    profileSummary.innerHTML="<div class=\"eyebrow\">Sector profile · synthetic</div>"+\n      "<h3 style=\"margin:6px 0 14px\">"+name+"</h3>"+\n      "<div class=\"fact-grid\">"+\n      "<div class=\"fact\"><label>Establishments</label><strong>"+p.establishments+"</strong></div>"+\n      "<div class=\"fact\"><label>National share</label><strong>"+p.share+"</strong></div>"+\n      "<div class=\"fact\"><label>Districts represented</label><strong>"+p.districts+"</strong></div>"+\n      "<div class=\"fact\"><label>District HHI</label><strong>"+p.hhi+"</strong></div>"+\n      "<div class=\"fact\"><label>Concentration</label><strong>"+p.concentration+"</strong></div>"+\n      "<div class=\"fact\"><label>Drill-down</label><strong>"+p.drill+"</strong></div></div>"+\n      "<div class=\"rule\"></div><div class=\"small\">HHI and largest-district shares are shown with their component district shares. No composite sector score is produced.</div>";\n    profileHead.innerHTML="<tr><th>District</th><th>Establishments</th><th>Share of national sector</th><th>Share of district</th><th>LQ</th></tr>";\n  }\n  profileRows.innerHTML=p.rows.map(function(row){\n    return "<tr>"+row.map(function(cell,i){return "<td>"+(i===4?"<strong>"+cell+"</strong>":cell)+"</td>";}).join("")+"</tr>";\n  }).join("");\n}\nprofileType.addEventListener("change",populateProfileChoices);\nprofileChoice.addEventListener("change",renderProfile);\npopulateProfileChoices();\nrender();
+[search,sector,district].forEach(el=>el.addEventListener("input",render));
+
+const profileType=document.getElementById("profileType");
+const profileChoice=document.getElementById("profileChoice");
+const profileSummary=document.getElementById("profileSummary");
+const profileHead=document.getElementById("profileHead");
+const profileRows=document.getElementById("profileRows");
+
+function profileDataset(){
+  return profileType.value==="district" ? demoDistrictProfiles : demoSectorProfiles;
+}
+function populateProfileChoices(){
+  const data=profileDataset();
+  profileChoice.innerHTML=Object.keys(data).map(function(name){return "<option>"+name+"</option>";}).join("");
+  renderProfile();
+}
+function renderProfile(){
+  const data=profileDataset();
+  const name=profileChoice.value || Object.keys(data)[0];
+  const p=data[name];
+  if(!p) return;
+  const isDistrict=profileType.value==="district";
+  if(isDistrict){
+    profileSummary.innerHTML="<div class=\"eyebrow\">District profile · synthetic</div>"+
+      "<h3 style=\"margin:6px 0 14px\">"+name+"</h3>"+
+      "<div class=\"fact-grid\">"+
+      "<div class=\"fact\"><label>Establishments</label><strong>"+p.establishments+"</strong></div>"+
+      "<div class=\"fact\"><label>National share</label><strong>"+p.share+"</strong></div>"+
+      "<div class=\"fact\"><label>Sector mapping coverage</label><strong>"+p.mapping+"</strong></div>"+
+      "<div class=\"fact\"><label>Upazilas represented</label><strong>"+p.upazilas+"</strong></div>"+
+      "<div class=\"fact\"><label>Concentration</label><strong>"+p.concentration+"</strong></div>"+
+      "<div class=\"fact\"><label>Drill-down</label><strong>"+p.drill+"</strong></div></div>"+
+      "<div class=\"rule\"></div><div class=\"small\">Location quotient above 1 means a sector has a larger share of establishments in this district than it has nationally. It is not a competitiveness score.</div>";
+    profileHead.innerHTML="<tr><th>Sector family</th><th>Establishments</th><th>Share of district</th><th>Share of national sector</th><th>LQ</th></tr>";
+  }else{
+    profileSummary.innerHTML="<div class=\"eyebrow\">Sector profile · synthetic</div>"+
+      "<h3 style=\"margin:6px 0 14px\">"+name+"</h3>"+
+      "<div class=\"fact-grid\">"+
+      "<div class=\"fact\"><label>Establishments</label><strong>"+p.establishments+"</strong></div>"+
+      "<div class=\"fact\"><label>National share</label><strong>"+p.share+"</strong></div>"+
+      "<div class=\"fact\"><label>Districts represented</label><strong>"+p.districts+"</strong></div>"+
+      "<div class=\"fact\"><label>District HHI</label><strong>"+p.hhi+"</strong></div>"+
+      "<div class=\"fact\"><label>Concentration</label><strong>"+p.concentration+"</strong></div>"+
+      "<div class=\"fact\"><label>Drill-down</label><strong>"+p.drill+"</strong></div></div>"+
+      "<div class=\"rule\"></div><div class=\"small\">HHI and largest-district shares are shown with their component district shares. No composite sector score is produced.</div>";
+    profileHead.innerHTML="<tr><th>District</th><th>Establishments</th><th>Share of national sector</th><th>Share of district</th><th>LQ</th></tr>";
+  }
+  profileRows.innerHTML=p.rows.map(function(row){
+    return "<tr>"+row.map(function(cell,i){return "<td>"+(i===4?"<strong>"+cell+"</strong>":cell)+"</td>";}).join("")+"</tr>";
+  }).join("");
+}
+profileType.addEventListener("change",populateProfileChoices);
+profileChoice.addEventListener("change",renderProfile);
+populateProfileChoices();
+render();
 </script>
 </body>
 </html>

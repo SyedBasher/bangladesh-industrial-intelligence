@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mangrove-intelligence.example/schemas/sector_exposure_profile_v1.schema.json",
+  "title": "Bangladesh Industrial Intelligence Sector Exposure Profile v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "sector",
+    "coverage",
+    "district_coverage",
+    "conditions",
+    "method"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "sector": {
+      "type": "object"
+    },
+    "coverage": {
+      "type": "object"
+    },
+    "district_coverage": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "conditions": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "method": {
+      "type": "object"
+    }
+  }
+}
