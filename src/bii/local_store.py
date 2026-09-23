@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections import Counter
 from dataclasses import asdict
 from pathlib import Path
 from typing import Mapping
@@ -3583,7 +3584,7 @@ class LocalValidationStore:
         public_ids = [int(record.public_id) for record in records]
         same_page_duplicates = [
             public_id
-            for public_id, count in __import__("collections").Counter(public_ids).items()
+            for public_id, count in Counter(public_ids).items()
             if count > 1
         ]
         if same_page_duplicates:
@@ -4173,19 +4174,19 @@ class LocalValidationStore:
         run = self.national_universe_run(universe_id)
         if run["status"] != "RUNNING":
             raise ValueError("failed pages can only be requeued on a RUNNING universe")
-        params: list[object] = [requeued_at, universe_id]
         where = "universe_id=? AND status='FAILED'"
+        select_params: list[object] = [universe_id]
         if pages is not None:
             if not pages:
                 return 0
             page_values = sorted({int(page) for page in pages})
             placeholders = ",".join("?" for _ in page_values)
             where += f" AND page IN ({placeholders})"
-            params.extend(page_values)
+            select_params.extend(page_values)
 
         failed_rows = self.conn.execute(
-            f"SELECT page FROM national_universe_pages WHERE {where.replace('?', '?', 0)}",
-            tuple(params[1:]),
+            f"SELECT page FROM national_universe_pages WHERE {where}",
+            tuple(select_params),
         ).fetchall()
         page_numbers = [int(row["page"]) for row in failed_rows]
         if not page_numbers:
