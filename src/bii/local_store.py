@@ -21,6 +21,18 @@ from .freeze import (
     ValidationFreezeError,
     build_validation_freeze_plan,
 )
+from .enrichment import (
+    DifeMatchRecord,
+    EnrichmentCoverage,
+    decide_external_link,
+)
+from .external_sources import (
+    ExternalRecordPayload,
+    SOURCE_SPECS,
+    is_sector_eligible,
+    parse_external_record,
+    source_spec,
+)
 from .hashutil import sha256_text
 from .parsers import extract_public_id, parse_dife_detail, parse_dife_list_page
 from .policy import SourceAccessPolicy
@@ -242,6 +254,96 @@ CREATE TABLE IF NOT EXISTS validation_anomalies (
     detail_value TEXT,
     note TEXT NOT NULL
 );
+
+
+CREATE TABLE IF NOT EXISTS external_source_profiles (
+    source_name TEXT PRIMARY KEY,
+    source_authority TEXT NOT NULL,
+    default_linkage TEXT NOT NULL,
+    stable_key_rule TEXT NOT NULL,
+    eligible_sector_families_json TEXT,
+    negative_inference_allowed INTEGER NOT NULL DEFAULT 0,
+    automation_policy_status TEXT NOT NULL DEFAULT 'UNKNOWN',
+    last_verified_at TEXT,
+    notes TEXT
+);
+
+CREATE TABLE IF NOT EXISTS external_source_records (
+    external_record_id INTEGER PRIMARY KEY,
+    source_name TEXT NOT NULL REFERENCES external_source_profiles(source_name),
+    external_key TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    entity_name TEXT NOT NULL,
+    site_text TEXT,
+    district TEXT,
+    upazila TEXT,
+    first_retrieved_at TEXT NOT NULL,
+    UNIQUE(source_name, external_key)
+);
+
+CREATE TABLE IF NOT EXISTS external_record_versions (
+    external_version_id INTEGER PRIMARY KEY,
+    external_record_id INTEGER NOT NULL REFERENCES external_source_records(external_record_id),
+    content_sha256 TEXT NOT NULL,
+    entity_name TEXT NOT NULL,
+    site_text TEXT,
+    district TEXT,
+    upazila TEXT,
+    source_updated_at_raw TEXT,
+    source_fields_json TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    UNIQUE(external_record_id, content_sha256)
+);
+
+CREATE TABLE IF NOT EXISTS enrichment_targets (
+    validation_label TEXT NOT NULL,
+    source_name TEXT NOT NULL REFERENCES external_source_profiles(source_name),
+    dife_public_id INTEGER NOT NULL REFERENCES establishments(dife_public_id),
+    eligible INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('PENDING','STAGED','REVIEWED','OUT_OF_SCOPE')),
+    planned_at TEXT NOT NULL,
+    PRIMARY KEY(validation_label, source_name, dife_public_id)
+);
+
+CREATE TABLE IF NOT EXISTS entity_links (
+    entity_link_id INTEGER PRIMARY KEY,
+    validation_label TEXT NOT NULL,
+    dife_public_id INTEGER NOT NULL REFERENCES establishments(dife_public_id),
+    source_name TEXT NOT NULL REFERENCES external_source_profiles(source_name),
+    external_record_id INTEGER NOT NULL REFERENCES external_source_records(external_record_id),
+    match_type TEXT NOT NULL CHECK(match_type IN (
+        'EXACT_SITE','PROBABLE_SITE','ORGANIZATION_ONLY',
+        'AMBIGUOUS','NO_MATCH','SOURCE_FEASIBILITY_ONLY'
+    )),
+    site_level_match INTEGER NOT NULL,
+    rule_version TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS match_evidence (
+    match_evidence_id INTEGER PRIMARY KEY,
+    entity_link_id INTEGER NOT NULL REFERENCES entity_links(entity_link_id),
+    evidence_type TEXT NOT NULL,
+    dife_value TEXT,
+    external_value TEXT,
+    result TEXT NOT NULL,
+    note TEXT
+);
+
+CREATE TABLE IF NOT EXISTS enrichment_reports (
+    report_id INTEGER PRIMARY KEY,
+    validation_label TEXT NOT NULL,
+    source_name TEXT NOT NULL,
+    generated_at TEXT NOT NULL,
+    coverage_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS external_record_source_key_idx
+    ON external_source_records(source_name, external_key);
+CREATE INDEX IF NOT EXISTS enrichment_target_status_idx
+    ON enrichment_targets(validation_label, source_name, status);
+CREATE INDEX IF NOT EXISTS entity_link_dife_source_idx
+    ON entity_links(validation_label, dife_public_id, source_name, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS validation_report_checkpoint_idx
     ON validation_reports(validation_label, checkpoint_n, generated_at DESC);
@@ -1308,6 +1410,440 @@ class LocalValidationStore:
             (report_id,),
         ).fetchall()
         return [dict(row) for row in rows]
+
+
+    def register_external_source_profile(
+        self,
+        source_name: str,
+        *,
+        automation_policy_status: str = "UNKNOWN",
+        last_verified_at: str | None = None,
+        notes: str | None = None,
+    ) -> None:
+        spec = source_spec(source_name)
+        if automation_policy_status not in {"UNKNOWN", "REVIEWED_ALLOWED", "REVIEWED_RESTRICTED"}:
+            raise ValueError("unsupported automation policy status")
+        eligible = (
+            None
+            if spec.eligible_sector_families is None
+            else json.dumps(list(spec.eligible_sector_families), sort_keys=True)
+        )
+        with self.conn:
+            self.conn.execute(
+                """INSERT INTO external_source_profiles(
+                       source_name, source_authority, default_linkage, stable_key_rule,
+                       eligible_sector_families_json, negative_inference_allowed,
+                       automation_policy_status, last_verified_at, notes
+                   ) VALUES(?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(source_name) DO UPDATE SET
+                     source_authority=excluded.source_authority,
+                     default_linkage=excluded.default_linkage,
+                     stable_key_rule=excluded.stable_key_rule,
+                     eligible_sector_families_json=excluded.eligible_sector_families_json,
+                     negative_inference_allowed=excluded.negative_inference_allowed,
+                     automation_policy_status=excluded.automation_policy_status,
+                     last_verified_at=COALESCE(excluded.last_verified_at, external_source_profiles.last_verified_at),
+                     notes=COALESCE(excluded.notes, external_source_profiles.notes)""",
+                (
+                    spec.source_name,
+                    spec.source_authority,
+                    spec.default_linkage,
+                    spec.stable_key_rule,
+                    eligible,
+                    int(spec.negative_inference_allowed),
+                    automation_policy_status,
+                    last_verified_at,
+                    notes,
+                ),
+            )
+
+    def _ensure_external_source_profile(self, source_name: str) -> None:
+        existing = self.conn.execute(
+            "SELECT 1 FROM external_source_profiles WHERE source_name=?",
+            (source_name.upper(),),
+        ).fetchone()
+        if existing is None:
+            self.register_external_source_profile(source_name)
+
+    def register_default_external_sources(
+        self,
+        *,
+        last_verified_at: str | None = None,
+    ) -> int:
+        for source_name in SOURCE_SPECS:
+            existing = self.conn.execute(
+                "SELECT 1 FROM external_source_profiles WHERE source_name=?",
+                (source_name,),
+            ).fetchone()
+            if existing is None:
+                self.register_external_source_profile(
+                    source_name,
+                    last_verified_at=last_verified_at,
+                    notes="Public source capability profile; live automation permission remains source-specific.",
+                )
+        return len(SOURCE_SPECS)
+
+    def plan_enrichment_targets(
+        self,
+        validation_label: str,
+        source_name: str,
+        *,
+        planned_at: str,
+    ) -> dict[str, int]:
+        """Create source-specific targets without interpreting absence as a negative fact."""
+        self._ensure_external_source_profile(source_name)
+        rows = self.conn.execute(
+            """SELECT dife_public_id, sector_family
+               FROM validation_sample
+               WHERE validation_label=?
+               ORDER BY dife_public_id""",
+            (validation_label,),
+        ).fetchall()
+        if not rows:
+            raise ValueError(f"validation sample not found: {validation_label!r}")
+
+        with self.conn:
+            for row in rows:
+                eligible = is_sector_eligible(source_name, str(row["sector_family"]))
+                self.conn.execute(
+                    """INSERT INTO enrichment_targets(
+                           validation_label, source_name, dife_public_id,
+                           eligible, status, planned_at
+                       ) VALUES(?,?,?,?,?,?)
+                       ON CONFLICT(validation_label, source_name, dife_public_id)
+                       DO UPDATE SET
+                         eligible=excluded.eligible,
+                         status=CASE
+                           WHEN enrichment_targets.status IN ('STAGED','REVIEWED')
+                             THEN enrichment_targets.status
+                           ELSE excluded.status
+                         END,
+                         planned_at=excluded.planned_at""",
+                    (
+                        validation_label,
+                        source_name.upper(),
+                        int(row["dife_public_id"]),
+                        int(eligible),
+                        "PENDING" if eligible else "OUT_OF_SCOPE",
+                        planned_at,
+                    ),
+                )
+        counts = self.conn.execute(
+            """SELECT
+                 SUM(CASE WHEN eligible=1 THEN 1 ELSE 0 END) AS eligible_n,
+                 SUM(CASE WHEN eligible=0 THEN 1 ELSE 0 END) AS out_scope_n
+               FROM enrichment_targets
+               WHERE validation_label=? AND source_name=?""",
+            (validation_label, source_name.upper()),
+        ).fetchone()
+        return {
+            "eligible": int(counts["eligible_n"] or 0),
+            "out_of_scope": int(counts["out_scope_n"] or 0),
+        }
+
+    def ingest_external_record_html(
+        self,
+        source_name: str,
+        html: str,
+        *,
+        source_url: str,
+        retrieved_at: str,
+    ) -> dict[str, object]:
+        """Stage a public external record and append a content-addressed version."""
+        self._ensure_external_source_profile(source_name)
+        payload = parse_external_record(source_name, html, source_url)
+        content_hash = sha256_text(html)
+
+        with self.conn:
+            self.conn.execute(
+                """INSERT INTO external_source_records(
+                       source_name, external_key, source_url, entity_name,
+                       site_text, district, upazila, first_retrieved_at
+                   ) VALUES(?,?,?,?,?,?,?,?)
+                   ON CONFLICT(source_name, external_key) DO UPDATE SET
+                     source_url=excluded.source_url,
+                     entity_name=excluded.entity_name,
+                     site_text=excluded.site_text,
+                     district=excluded.district,
+                     upazila=excluded.upazila""",
+                (
+                    payload.source_name,
+                    payload.external_key,
+                    payload.source_url,
+                    payload.entity_name,
+                    payload.site_text,
+                    payload.district,
+                    payload.upazila,
+                    retrieved_at,
+                ),
+            )
+            external_record_id = int(
+                self.conn.execute(
+                    """SELECT external_record_id FROM external_source_records
+                       WHERE source_name=? AND external_key=?""",
+                    (payload.source_name, payload.external_key),
+                ).fetchone()[0]
+            )
+            self.conn.execute(
+                """INSERT OR IGNORE INTO external_record_versions(
+                       external_record_id, content_sha256, entity_name, site_text,
+                       district, upazila, source_updated_at_raw,
+                       source_fields_json, observed_at
+                   ) VALUES(?,?,?,?,?,?,?,?,?)""",
+                (
+                    external_record_id,
+                    content_hash,
+                    payload.entity_name,
+                    payload.site_text,
+                    payload.district,
+                    payload.upazila,
+                    payload.source_updated_at_raw,
+                    json.dumps(payload.source_fields, ensure_ascii=False, sort_keys=True),
+                    retrieved_at,
+                ),
+            )
+        version_id = int(
+            self.conn.execute(
+                """SELECT external_version_id FROM external_record_versions
+                   WHERE external_record_id=? AND content_sha256=?""",
+                (external_record_id, content_hash),
+            ).fetchone()[0]
+        )
+        return {
+            "external_record_id": external_record_id,
+            "external_version_id": version_id,
+            "source_name": payload.source_name,
+            "external_key": payload.external_key,
+            "content_sha256": content_hash,
+        }
+
+    def _dife_match_record(
+        self,
+        validation_label: str,
+        dife_public_id: int,
+    ) -> DifeMatchRecord:
+        row = self.conn.execute(
+            """WITH latest_list AS (
+                   SELECT eo.*,
+                          ROW_NUMBER() OVER(
+                              PARTITION BY eo.dife_public_id
+                              ORDER BY eo.observed_at DESC, eo.observation_id DESC
+                          ) AS rn
+                   FROM establishment_observations eo
+               ),
+               latest_detail AS (
+                   SELECT d.*,
+                          ROW_NUMBER() OVER(
+                              PARTITION BY d.validation_label, d.dife_public_id
+                              ORDER BY d.observed_at DESC, d.detail_observation_id DESC
+                          ) AS rn
+                   FROM detail_observations d
+                   WHERE d.validation_label=?
+               )
+               SELECT
+                   v.dife_public_id,
+                   v.sector_family,
+                   COALESCE(ld.name_en, ld.name_bn, ll.name) AS match_name,
+                   ld.address AS match_address,
+                   COALESCE(ld.district, ll.district) AS match_district,
+                   COALESCE(ld.upazila, ll.upazila) AS match_upazila
+               FROM validation_sample v
+               LEFT JOIN latest_list ll
+                 ON ll.dife_public_id=v.dife_public_id AND ll.rn=1
+               LEFT JOIN latest_detail ld
+                 ON ld.dife_public_id=v.dife_public_id AND ld.rn=1
+               WHERE v.validation_label=? AND v.dife_public_id=?""",
+            (validation_label, validation_label, dife_public_id),
+        ).fetchone()
+        if row is None:
+            raise KeyError(
+                f"DIFE validation record not found: {validation_label} {dife_public_id}"
+            )
+        return DifeMatchRecord(
+            public_id=int(row["dife_public_id"]),
+            name=row["match_name"],
+            address=row["match_address"],
+            district=row["match_district"],
+            upazila=row["match_upazila"],
+            sector_family=str(row["sector_family"]),
+        )
+
+    def _external_payload(self, external_record_id: int) -> ExternalRecordPayload:
+        row = self.conn.execute(
+            """SELECT r.source_name, r.external_key, r.source_url,
+                      v.entity_name, v.site_text, v.district, v.upazila,
+                      v.source_updated_at_raw, v.source_fields_json
+               FROM external_source_records r
+               JOIN external_record_versions v
+                 ON v.external_record_id=r.external_record_id
+               WHERE r.external_record_id=?
+               ORDER BY v.observed_at DESC, v.external_version_id DESC
+               LIMIT 1""",
+            (external_record_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"external record not found: {external_record_id}")
+        return ExternalRecordPayload(
+            source_name=str(row["source_name"]),
+            external_key=str(row["external_key"]),
+            entity_name=str(row["entity_name"]),
+            site_text=row["site_text"],
+            district=row["district"],
+            upazila=row["upazila"],
+            source_url=str(row["source_url"]),
+            source_updated_at_raw=row["source_updated_at_raw"],
+            source_fields=json.loads(str(row["source_fields_json"])),
+        )
+
+    def review_external_link(
+        self,
+        validation_label: str,
+        dife_public_id: int,
+        external_record_id: int,
+        *,
+        reviewed_at: str,
+        multiple_candidates: bool = False,
+        rule_version: str = "1.3",
+    ) -> dict[str, object]:
+        dife = self._dife_match_record(validation_label, dife_public_id)
+        external = self._external_payload(external_record_id)
+        target = self.conn.execute(
+            """SELECT eligible FROM enrichment_targets
+               WHERE validation_label=? AND source_name=? AND dife_public_id=?""",
+            (validation_label, external.source_name, dife_public_id),
+        ).fetchone()
+        if target is None:
+            raise ValueError(
+                "enrichment target must be planned before a source record can be reviewed"
+            )
+
+        decision = decide_external_link(
+            dife,
+            external,
+            multiple_candidates=multiple_candidates,
+        )
+
+        with self.conn:
+            cursor = self.conn.execute(
+                """INSERT INTO entity_links(
+                       validation_label, dife_public_id, source_name,
+                       external_record_id, match_type, site_level_match,
+                       rule_version, created_at
+                   ) VALUES(?,?,?,?,?,?,?,?)""",
+                (
+                    validation_label,
+                    dife_public_id,
+                    external.source_name,
+                    external_record_id,
+                    str(decision.match_type),
+                    int(decision.site_level_match),
+                    rule_version,
+                    reviewed_at,
+                ),
+            )
+            link_id = int(cursor.lastrowid)
+            self.conn.executemany(
+                """INSERT INTO match_evidence(
+                       entity_link_id, evidence_type, dife_value,
+                       external_value, result, note
+                   ) VALUES(?,?,?,?,?,?)""",
+                [
+                    (
+                        link_id,
+                        component.evidence_type,
+                        component.dife_value,
+                        component.external_value,
+                        component.result,
+                        component.note,
+                    )
+                    for component in decision.evidence
+                ],
+            )
+            self.conn.execute(
+                """UPDATE enrichment_targets
+                   SET status='REVIEWED'
+                   WHERE validation_label=? AND source_name=? AND dife_public_id=?""",
+                (validation_label, external.source_name, dife_public_id),
+            )
+        return {
+            "entity_link_id": link_id,
+            "match_type": str(decision.match_type),
+            "site_level_match": decision.site_level_match,
+        }
+
+    def enrichment_coverage(
+        self,
+        validation_label: str,
+        source_name: str,
+    ) -> EnrichmentCoverage:
+        source_name = source_name.upper()
+        target = self.conn.execute(
+            """SELECT COUNT(*) AS n
+               FROM enrichment_targets
+               WHERE validation_label=? AND source_name=? AND eligible=1""",
+            (validation_label, source_name),
+        ).fetchone()
+        eligible = int(target["n"] if target else 0)
+
+        staged = int(
+            self.conn.execute(
+                """SELECT COUNT(DISTINCT external_record_id)
+                   FROM entity_links
+                   WHERE validation_label=? AND source_name=?""",
+                (validation_label, source_name),
+            ).fetchone()[0]
+        )
+
+        rows = self.conn.execute(
+            """WITH latest_link AS (
+                   SELECT el.*,
+                          ROW_NUMBER() OVER(
+                              PARTITION BY el.validation_label, el.dife_public_id, el.source_name
+                              ORDER BY el.created_at DESC, el.entity_link_id DESC
+                          ) AS rn
+                   FROM entity_links el
+                   WHERE el.validation_label=? AND el.source_name=?
+               )
+               SELECT match_type, COUNT(*) AS n
+               FROM latest_link
+               WHERE rn=1
+               GROUP BY match_type""",
+            (validation_label, source_name),
+        ).fetchall()
+        counts = {str(row["match_type"]): int(row["n"]) for row in rows}
+        return EnrichmentCoverage(
+            source_name=source_name,
+            eligible=eligible,
+            staged_records=staged,
+            exact_site=counts.get("EXACT_SITE", 0),
+            probable_site=counts.get("PROBABLE_SITE", 0),
+            organization_only=counts.get("ORGANIZATION_ONLY", 0),
+            ambiguous=counts.get("AMBIGUOUS", 0),
+            no_match=counts.get("NO_MATCH", 0),
+            feasibility_only=counts.get("SOURCE_FEASIBILITY_ONLY", 0),
+        )
+
+    def generate_enrichment_report(
+        self,
+        validation_label: str,
+        source_name: str,
+        *,
+        generated_at: str,
+    ) -> tuple[int, EnrichmentCoverage]:
+        coverage = self.enrichment_coverage(validation_label, source_name)
+        with self.conn:
+            cursor = self.conn.execute(
+                """INSERT INTO enrichment_reports(
+                       validation_label, source_name, generated_at, coverage_json
+                   ) VALUES(?,?,?,?)""",
+                (
+                    validation_label,
+                    source_name.upper(),
+                    generated_at,
+                    json.dumps(asdict(coverage), sort_keys=True),
+                ),
+            )
+        return int(cursor.lastrowid), coverage
 
     def counts(self) -> dict[str, int]:
         return {

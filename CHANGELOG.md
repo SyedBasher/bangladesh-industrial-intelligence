@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.13.0-dev — 2026-09-23
+
+- Added staged parsers and stable-key rules for EPB, BGMEA, BKMEA, BEPZA and DoE.
+- Added source-specific sector eligibility and linkage-scope rules.
+- Added transparent site-vs-organization evidence generation with no opaque confidence score.
+- Added private external record/version storage, enrichment targets, entity links and match-evidence audit records.
+- Added source-level coverage reports and explicit protection against absence-based negative inference.
+- Added PostgreSQL migration parity for the enrichment validation layer.
+
 ## v0.12.0-dev — 2026-09-23
 
 - Added list-to-detail anomaly detection for district, status, sector, class and name variation.
