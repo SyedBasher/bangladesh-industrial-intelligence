@@ -1,0 +1,42 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Private/proprietary data
+/data/
+/raw/
+/snapshots/
+/exports/
+/downloads/
+/private/
+/secrets/
+*.sqlite
+*.sqlite3
+*.db
+*.csv
+*.parquet
+*.xlsx
+*.xls
+
+# Allow deliberately tiny synthetic test fixtures only
+!tests/fixtures/
+!tests/fixtures/**
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
