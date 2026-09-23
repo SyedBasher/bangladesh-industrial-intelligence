@@ -193,3 +193,32 @@ def test_unresolved_page_prevents_finalize(tmp_path):
                 run_id,
                 completed_at="2026-09-24T01:01:00+06:00",
             )
+
+
+def test_product_profile_can_use_eligible_national_cluster_context(tmp_path):
+    with LocalValidationStore(tmp_path / "national.sqlite") as store:
+        run_id = _stage_complete_demo(store)
+        store.finalize_national_universe_run(
+            run_id,
+            completed_at="2026-09-24T01:05:00+06:00",
+        )
+        store.freeze_validation_sample(
+            "one_record_validation",
+            selected_at="2026-09-24T01:06:00+06:00",
+            sector_targets={"RMG_TEXTILE": 1},
+            geography_targets={"CORE_DHAKA": 1},
+        )
+        selected_id = int(store.conn.execute(
+            """SELECT dife_public_id FROM validation_sample
+               WHERE validation_label='one_record_validation'"""
+        ).fetchone()[0])
+
+        payload = store.product_establishment_payload(
+            "one_record_validation",
+            selected_id,
+            generated_at="2026-09-24T01:07:00+06:00",
+            national_universe_label="dife_demo_complete",
+        )
+        cluster = payload["calculated"]["cluster_context"]
+        assert cluster["universe_kind"] == "NATIONAL_REGISTRY"
+        assert cluster["suitable_for_national_cluster_claim"] is True
