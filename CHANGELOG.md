@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.19.0-dev — 2026-09-23
+
+- Added calculated evidence freshness using source vintage with observation-time fallback.
+- Added export/product breadth from approved organization-scoped evidence.
+- Added cross-source numeric consistency diagnostics for employment, machines and capacity.
+- Added first-to-latest numeric change signals across validated source versions without causal interpretation.
+- Added declared-universe district × sector context with explicit protection against national cluster claims from the stratified validation sample.
+- Bumped the safe product contract to schema v1.1 and added a backward-preserving v1.1 JSON Schema.
+
 ## v0.18.0-dev — 2026-09-23
 
 - Added a strict versioned product payload between the private database and frontend/API consumers.
