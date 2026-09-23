@@ -73,6 +73,9 @@ def test_private_store_generates_safe_product_payload(tmp_path):
         assert payload["facts"]["machines"][0]["numeric_value"] == 300
         assert payload["facts"]["production_capacity"][0]["numeric_value"] == 2_500_000
         assert payload["calculated"]["employment_scale_band"]["value"] == "1000_PLUS"
+        assert payload["calculated"]["evidence_freshness"]["origin"] == "CALCULATED"
+        assert payload["calculated"]["cluster_context"]["universe_kind"] == "VALIDATION_SAMPLE"
+        assert payload["calculated"]["cluster_context"]["suitable_for_national_cluster_claim"] is False
 
         serialized = str(payload)
         for forbidden in (
@@ -96,7 +99,7 @@ def test_validation_feed_contains_only_product_contracts(tmp_path):
             generated_at="2026-09-24T00:50:00+06:00",
         )
         assert len(feed) == 1
-        assert feed[0]["schema_version"] == "1.0"
+        assert feed[0]["schema_version"] == "1.1"
         assert set(feed[0]) == {
             "schema_version",
             "generated_at",
