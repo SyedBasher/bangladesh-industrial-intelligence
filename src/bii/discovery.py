@@ -134,7 +134,7 @@ def allocate_desired_rows(
         raw: list[tuple[SectorUniverse, int]] = []
         for member in members:
             share = family_target * member.total_records / family_total if family_total else 0
-            desired = max(page_size, min(member.total_records, math.ceil(share)))
+            desired = min(member.total_records, max(page_size, math.ceil(share)))
             raw.append((member, desired))
 
         for member, desired in raw:
