@@ -1,17 +1,28 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import asdict
 from pathlib import Path
 from typing import Mapping
 
+from .detail_validation import (
+    DEFAULT_CHECKPOINT_POLICY,
+    CheckpointDecision,
+    CheckpointPolicy,
+    DetailCheckpointMetrics,
+    FrozenValidationRecord,
+    assess_detail_record,
+    evaluate_checkpoint,
+    plan_progressive_detail_batches,
+)
 from .discovery import DiscoveryRequest, candidate_pool_health
 from .freeze import (
     ValidationFreezeError,
     build_validation_freeze_plan,
 )
 from .hashutil import sha256_text
-from .parsers import parse_dife_list_page
+from .parsers import extract_public_id, parse_dife_detail, parse_dife_list_page
 from .sampling import ValidationCandidate
 from .supplement import SupplementRequest
 
@@ -100,6 +111,83 @@ CREATE TABLE IF NOT EXISTS validation_sample (
     selected_at TEXT NOT NULL,
     PRIMARY KEY(validation_label, dife_public_id)
 );
+
+
+CREATE TABLE IF NOT EXISTS detail_checkpoints (
+    validation_label TEXT NOT NULL,
+    checkpoint_n INTEGER NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('LOCKED','READY','PASSED','FAILED')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(validation_label, checkpoint_n)
+);
+
+CREATE TABLE IF NOT EXISTS detail_requests (
+    validation_label TEXT NOT NULL,
+    dife_public_id INTEGER NOT NULL REFERENCES establishments(dife_public_id),
+    sequence_no INTEGER NOT NULL,
+    first_checkpoint INTEGER NOT NULL,
+    source_url TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PLANNED'
+        CHECK(status IN ('PLANNED','PARSED','FAILED','SKIPPED')),
+    planned_at TEXT NOT NULL,
+    resolved_at TEXT,
+    staged_snapshot_id INTEGER REFERENCES source_snapshots(snapshot_id),
+    parser_valid INTEGER,
+    core_complete INTEGER,
+    error_message TEXT,
+    PRIMARY KEY(validation_label, dife_public_id),
+    UNIQUE(validation_label, sequence_no),
+    UNIQUE(validation_label, source_url)
+);
+
+CREATE TABLE IF NOT EXISTS detail_observations (
+    detail_observation_id INTEGER PRIMARY KEY,
+    validation_label TEXT NOT NULL,
+    dife_public_id INTEGER NOT NULL REFERENCES establishments(dife_public_id),
+    snapshot_id INTEGER NOT NULL REFERENCES source_snapshots(snapshot_id),
+    name_en TEXT,
+    name_bn TEXT,
+    address TEXT,
+    upazila TEXT,
+    district TEXT,
+    division TEXT,
+    status TEXT,
+    licence_expiry_raw TEXT,
+    sector TEXT,
+    licence_no TEXT,
+    old_licence_no TEXT,
+    registration_no TEXT,
+    old_registration_no TEXT,
+    licence_class TEXT,
+    establishment_type TEXT,
+    worker_component_1 INTEGER,
+    worker_component_2 INTEGER,
+    worker_total INTEGER,
+    parser_valid INTEGER NOT NULL,
+    core_complete INTEGER NOT NULL,
+    core_present INTEGER NOT NULL,
+    core_expected INTEGER NOT NULL,
+    observed_at TEXT NOT NULL,
+    row_sha256 TEXT NOT NULL,
+    UNIQUE(validation_label, dife_public_id, snapshot_id, row_sha256)
+);
+
+CREATE TABLE IF NOT EXISTS detail_checkpoint_decisions (
+    decision_id INTEGER PRIMARY KEY,
+    validation_label TEXT NOT NULL,
+    checkpoint_n INTEGER NOT NULL,
+    evaluated_at TEXT NOT NULL,
+    passed INTEGER NOT NULL,
+    metrics_json TEXT NOT NULL,
+    policy_json TEXT NOT NULL,
+    reasons_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS detail_request_checkpoint_idx
+    ON detail_requests(validation_label, first_checkpoint, status);
+CREATE INDEX IF NOT EXISTS detail_observation_public_id_idx
+    ON detail_observations(validation_label, dife_public_id, detail_observation_id DESC);
 
 CREATE INDEX IF NOT EXISTS discovery_plan_status_idx
     ON discovery_requests(plan_label, status);
@@ -461,6 +549,432 @@ class LocalValidationStore:
                 ],
             )
         return len(plan.selections)
+
+
+    def plan_detail_validation(
+        self,
+        validation_label: str,
+        *,
+        planned_at: str,
+        checkpoints: tuple[int, ...] = (100, 500, 2000),
+        base_url: str = "https://lima.dife.gov.bd/public-report/establishment",
+    ) -> int:
+        """Create immutable progressive detail assignments from a frozen sample.
+
+        Once detail requests exist for a validation label, the plan cannot be silently
+        replaced. Re-freezing the underlying validation sample requires a new label.
+        """
+        existing = self.conn.execute(
+            "SELECT COUNT(*) FROM detail_requests WHERE validation_label=?",
+            (validation_label,),
+        ).fetchone()[0]
+        if existing:
+            raise ValueError(
+                f"detail validation is already planned for {validation_label!r}; use a new validation label"
+            )
+
+        rows = self.conn.execute(
+            """SELECT dife_public_id, sector_family, geography_group
+               FROM validation_sample
+               WHERE validation_label=?
+               ORDER BY dife_public_id""",
+            (validation_label,),
+        ).fetchall()
+        records = [
+            FrozenValidationRecord(
+                public_id=int(row["dife_public_id"]),
+                sector_family=str(row["sector_family"]),
+                geography_group=str(row["geography_group"]),
+            )
+            for row in rows
+        ]
+        assignments = plan_progressive_detail_batches(
+            records,
+            validation_label=validation_label,
+            checkpoints=checkpoints,
+        )
+        checkpoints = tuple(sorted(set(int(value) for value in checkpoints)))
+
+        with self.conn:
+            self.conn.executemany(
+                """INSERT INTO detail_requests(
+                       validation_label, dife_public_id, sequence_no, first_checkpoint,
+                       source_url, status, planned_at
+                   ) VALUES(?,?,?,?,?,?,?)""",
+                [
+                    (
+                        validation_label,
+                        assignment.public_id,
+                        assignment.sequence_no,
+                        assignment.first_checkpoint,
+                        f"{base_url.rstrip('/')}/{assignment.public_id}",
+                        "PLANNED",
+                        planned_at,
+                    )
+                    for assignment in assignments
+                ],
+            )
+            self.conn.executemany(
+                """INSERT INTO detail_checkpoints(
+                       validation_label, checkpoint_n, state, created_at, updated_at
+                   ) VALUES(?,?,?,?,?)""",
+                [
+                    (
+                        validation_label,
+                        checkpoint,
+                        "READY" if index == 0 else "LOCKED",
+                        planned_at,
+                        planned_at,
+                    )
+                    for index, checkpoint in enumerate(checkpoints)
+                ],
+            )
+        return len(assignments)
+
+    def detail_checkpoint_states(self, validation_label: str) -> dict[int, str]:
+        rows = self.conn.execute(
+            """SELECT checkpoint_n, state
+               FROM detail_checkpoints
+               WHERE validation_label=?
+               ORDER BY checkpoint_n""",
+            (validation_label,),
+        ).fetchall()
+        return {int(row["checkpoint_n"]): str(row["state"]) for row in rows}
+
+    def detail_requests_for_checkpoint(
+        self,
+        validation_label: str,
+        checkpoint_n: int,
+    ) -> list[dict[str, object]]:
+        """Return only the newly authorized tranche for a checkpoint."""
+        checkpoint = self.conn.execute(
+            """SELECT state FROM detail_checkpoints
+               WHERE validation_label=? AND checkpoint_n=?""",
+            (validation_label, checkpoint_n),
+        ).fetchone()
+        if checkpoint is None:
+            raise KeyError(f"unknown detail checkpoint: {validation_label} {checkpoint_n}")
+        if checkpoint["state"] != "READY":
+            raise ValueError(
+                f"checkpoint {checkpoint_n} is {checkpoint['state']}, not READY"
+            )
+        rows = self.conn.execute(
+            """SELECT dife_public_id, sequence_no, first_checkpoint, source_url, status
+               FROM detail_requests
+               WHERE validation_label=? AND first_checkpoint=? AND status='PLANNED'
+               ORDER BY sequence_no""",
+            (validation_label, checkpoint_n),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_detail_request_failed(
+        self,
+        validation_label: str,
+        dife_public_id: int,
+        *,
+        resolved_at: str,
+        error_message: str,
+    ) -> None:
+        cursor = self.conn.execute(
+            """UPDATE detail_requests
+               SET status='FAILED', resolved_at=?, error_message=?,
+                   staged_snapshot_id=NULL, parser_valid=NULL, core_complete=NULL
+               WHERE validation_label=? AND dife_public_id=?""",
+            (resolved_at, error_message, validation_label, dife_public_id),
+        )
+        if cursor.rowcount != 1:
+            raise KeyError(
+                f"detail request not found: {validation_label} {dife_public_id}"
+            )
+        self.conn.commit()
+
+    def reset_failed_detail_request(
+        self,
+        validation_label: str,
+        dife_public_id: int,
+    ) -> None:
+        """Allow an explicitly failed request to be retried without losing its audit row."""
+        cursor = self.conn.execute(
+            """UPDATE detail_requests
+               SET status='PLANNED', resolved_at=NULL, error_message=NULL,
+                   staged_snapshot_id=NULL, parser_valid=NULL, core_complete=NULL
+               WHERE validation_label=? AND dife_public_id=? AND status='FAILED'""",
+            (validation_label, dife_public_id),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("only FAILED detail requests can be reset for retry")
+        self.conn.commit()
+
+    def ingest_dife_detail_html(
+        self,
+        validation_label: str,
+        dife_public_id: int,
+        html: str,
+        *,
+        source_url: str,
+        retrieved_at: str,
+        raw_payload_path: str | None = None,
+        parser_version: str = "1.0",
+    ) -> dict[str, object]:
+        """Parse and persist one already-obtained DIFE public detail page."""
+        request = self.conn.execute(
+            """SELECT source_url, status FROM detail_requests
+               WHERE validation_label=? AND dife_public_id=?""",
+            (validation_label, dife_public_id),
+        ).fetchone()
+        if request is None:
+            raise KeyError(
+                f"detail request not planned: {validation_label} {dife_public_id}"
+            )
+        if source_url != request["source_url"]:
+            raise ValueError("detail source URL differs from the frozen request manifest")
+        if extract_public_id(source_url) != int(dife_public_id):
+            raise ValueError("detail source URL does not contain the expected public DIFE ID")
+
+        detail = parse_dife_detail(html)
+        assessment = assess_detail_record(detail)
+        content_hash = sha256_text(html)
+        row_hash = sha256_text(repr(sorted(asdict(detail).items())))
+
+        with self.conn:
+            self.conn.execute(
+                """INSERT OR IGNORE INTO source_snapshots(
+                       source_name, source_url, retrieved_at, source_reported_at_raw,
+                       source_total_records, content_sha256, raw_payload_path, parser_version
+                   ) VALUES(?,?,?,?,?,?,?,?)""",
+                (
+                    "DIFE/LIMA DETAIL",
+                    source_url,
+                    retrieved_at,
+                    None,
+                    None,
+                    content_hash,
+                    raw_payload_path,
+                    parser_version,
+                ),
+            )
+            snapshot_id = int(
+                self.conn.execute(
+                    """SELECT snapshot_id FROM source_snapshots
+                       WHERE source_name='DIFE/LIMA DETAIL'
+                         AND source_url=? AND content_sha256=?""",
+                    (source_url, content_hash),
+                ).fetchone()[0]
+            )
+
+            self.conn.execute(
+                """INSERT OR IGNORE INTO detail_observations(
+                       validation_label, dife_public_id, snapshot_id,
+                       name_en, name_bn, address, upazila, district, division, status,
+                       licence_expiry_raw, sector, licence_no, old_licence_no,
+                       registration_no, old_registration_no, licence_class,
+                       establishment_type, worker_component_1, worker_component_2,
+                       worker_total, parser_valid, core_complete, core_present,
+                       core_expected, observed_at, row_sha256
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    validation_label,
+                    dife_public_id,
+                    snapshot_id,
+                    detail.name_en,
+                    detail.name_bn,
+                    detail.address,
+                    detail.upazila,
+                    detail.district,
+                    detail.division,
+                    detail.status,
+                    detail.licence_expiry_raw,
+                    detail.sector,
+                    detail.licence_no,
+                    detail.old_licence_no,
+                    detail.registration_no,
+                    detail.old_registration_no,
+                    detail.licence_class,
+                    detail.establishment_type,
+                    detail.worker_component_1,
+                    detail.worker_component_2,
+                    detail.worker_total,
+                    int(assessment.parser_valid),
+                    int(assessment.core_complete),
+                    assessment.core_present,
+                    assessment.core_expected,
+                    retrieved_at,
+                    row_hash,
+                ),
+            )
+            self.conn.execute(
+                """UPDATE detail_requests
+                   SET status='PARSED', resolved_at=?, staged_snapshot_id=?,
+                       parser_valid=?, core_complete=?, error_message=NULL
+                   WHERE validation_label=? AND dife_public_id=?""",
+                (
+                    retrieved_at,
+                    snapshot_id,
+                    int(assessment.parser_valid),
+                    int(assessment.core_complete),
+                    validation_label,
+                    dife_public_id,
+                ),
+            )
+
+        return {
+            "snapshot_id": snapshot_id,
+            "content_sha256": content_hash,
+            "parser_valid": assessment.parser_valid,
+            "core_complete": assessment.core_complete,
+            "employment_present": assessment.employment_present,
+            "expiry_present": assessment.expiry_present,
+        }
+
+    def detail_checkpoint_metrics(
+        self,
+        validation_label: str,
+        checkpoint_n: int,
+    ) -> DetailCheckpointMetrics:
+        """Calculate cumulative QC metrics through the requested checkpoint."""
+        rows = self.conn.execute(
+            """SELECT
+                   r.dife_public_id, r.sequence_no, r.source_url, r.status,
+                   r.parser_valid, r.core_complete, r.staged_snapshot_id,
+                   s.source_url AS snapshot_url, s.retrieved_at,
+                   s.content_sha256, s.raw_payload_path,
+                   o.name_en, o.name_bn, o.district, o.sector, o.status AS detail_status,
+                   o.establishment_type, o.licence_no, o.registration_no,
+                   o.licence_expiry_raw, o.worker_total
+               FROM detail_requests r
+               LEFT JOIN source_snapshots s
+                 ON s.snapshot_id = r.staged_snapshot_id
+               LEFT JOIN detail_observations o
+                 ON o.validation_label = r.validation_label
+                AND o.dife_public_id = r.dife_public_id
+                AND o.snapshot_id = r.staged_snapshot_id
+               WHERE r.validation_label=? AND r.sequence_no<=?
+               ORDER BY r.sequence_no""",
+            (validation_label, checkpoint_n),
+        ).fetchall()
+        planned = len(rows)
+        if planned == 0:
+            raise ValueError(
+                f"no detail requests planned for {validation_label!r} through {checkpoint_n}"
+            )
+
+        parsed_rows = [row for row in rows if row["status"] == "PARSED"]
+        failed = sum(row["status"] == "FAILED" for row in rows)
+        skipped = sum(row["status"] == "SKIPPED" for row in rows)
+        resolved = len(parsed_rows) + failed + skipped
+
+        def rate(numerator: int, denominator: int) -> float:
+            return numerator / denominator if denominator else 0.0
+
+        parsed = len(parsed_rows)
+        parser_valid = sum(bool(row["parser_valid"]) for row in parsed_rows)
+        provenance_complete = sum(
+            bool(
+                row["staged_snapshot_id"]
+                and row["snapshot_url"] == row["source_url"]
+                and row["retrieved_at"]
+                and row["content_sha256"]
+            )
+            for row in parsed_rows
+        )
+        url_id_integrity = sum(
+            extract_public_id(str(row["source_url"])) == int(row["dife_public_id"])
+            for row in parsed_rows
+        )
+        core_complete = sum(bool(row["core_complete"]) for row in parsed_rows)
+
+        def coverage(field: str) -> float:
+            return rate(
+                sum(row[field] is not None and str(row[field]).strip() != "" for row in parsed_rows),
+                parsed,
+            )
+
+        return DetailCheckpointMetrics(
+            checkpoint_n=int(checkpoint_n),
+            planned=planned,
+            resolved=resolved,
+            parsed=parsed,
+            failed=failed,
+            skipped=skipped,
+            retrieval_success_rate=rate(parsed, planned),
+            parser_valid_rate=rate(parser_valid, parsed),
+            provenance_complete_rate=rate(provenance_complete, parsed),
+            url_id_integrity_rate=rate(url_id_integrity, parsed),
+            core_complete_rate=rate(core_complete, parsed),
+            employment_coverage_rate=coverage("worker_total"),
+            expiry_coverage_rate=coverage("licence_expiry_raw"),
+            licence_coverage_rate=coverage("licence_no"),
+            registration_coverage_rate=coverage("registration_no"),
+            district_coverage_rate=coverage("district"),
+            sector_coverage_rate=coverage("sector"),
+            status_coverage_rate=coverage("detail_status"),
+            establishment_type_coverage_rate=coverage("establishment_type"),
+        )
+
+    def evaluate_detail_checkpoint(
+        self,
+        validation_label: str,
+        checkpoint_n: int,
+        *,
+        evaluated_at: str,
+        policy: CheckpointPolicy = DEFAULT_CHECKPOINT_POLICY,
+    ) -> tuple[DetailCheckpointMetrics, CheckpointDecision]:
+        """Evaluate a checkpoint and unlock the next tranche only when it passes."""
+        checkpoint = self.conn.execute(
+            """SELECT state FROM detail_checkpoints
+               WHERE validation_label=? AND checkpoint_n=?""",
+            (validation_label, checkpoint_n),
+        ).fetchone()
+        if checkpoint is None:
+            raise KeyError(f"unknown detail checkpoint: {validation_label} {checkpoint_n}")
+        if checkpoint["state"] == "LOCKED":
+            raise ValueError("cannot evaluate a LOCKED checkpoint")
+
+        metrics = self.detail_checkpoint_metrics(validation_label, checkpoint_n)
+        decision = evaluate_checkpoint(metrics, policy)
+
+        with self.conn:
+            self.conn.execute(
+                """INSERT INTO detail_checkpoint_decisions(
+                       validation_label, checkpoint_n, evaluated_at, passed,
+                       metrics_json, policy_json, reasons_json
+                   ) VALUES(?,?,?,?,?,?,?)""",
+                (
+                    validation_label,
+                    checkpoint_n,
+                    evaluated_at,
+                    int(decision.passed),
+                    json.dumps(asdict(metrics), sort_keys=True),
+                    json.dumps(asdict(policy), sort_keys=True),
+                    json.dumps(list(decision.reasons), ensure_ascii=False),
+                ),
+            )
+            self.conn.execute(
+                """UPDATE detail_checkpoints
+                   SET state=?, updated_at=?
+                   WHERE validation_label=? AND checkpoint_n=?""",
+                (
+                    "PASSED" if decision.passed else "FAILED",
+                    evaluated_at,
+                    validation_label,
+                    checkpoint_n,
+                ),
+            )
+            if decision.passed:
+                next_row = self.conn.execute(
+                    """SELECT checkpoint_n FROM detail_checkpoints
+                       WHERE validation_label=? AND checkpoint_n>?
+                       ORDER BY checkpoint_n LIMIT 1""",
+                    (validation_label, checkpoint_n),
+                ).fetchone()
+                if next_row is not None:
+                    self.conn.execute(
+                        """UPDATE detail_checkpoints
+                           SET state='READY', updated_at=?
+                           WHERE validation_label=? AND checkpoint_n=? AND state='LOCKED'""",
+                        (evaluated_at, validation_label, int(next_row["checkpoint_n"])),
+                    )
+        return metrics, decision
 
     def counts(self) -> dict[str, int]:
         return {
