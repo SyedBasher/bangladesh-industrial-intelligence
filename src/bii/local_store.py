@@ -12,6 +12,11 @@ from .national_product import (
     build_national_dashboard_payload,
     build_national_registry_rows,
 )
+from .national_profiles import (
+    build_district_profile,
+    build_sector_profile,
+    filter_registry_for_profile,
+)
 from .national_universe import (
     NationalDuplicatePublicIdError,
     NationalPageCardinalityError,
@@ -3994,6 +3999,63 @@ class LocalValidationStore:
             universe_label=universe_label,
             generated_at=generated_at,
         )
+
+    def national_district_profile(
+        self,
+        universe_label: str,
+        district: str,
+        *,
+        generated_at: str,
+    ) -> dict[str, object]:
+        dashboard = self.national_dashboard_payload(
+            universe_label,
+            generated_at=generated_at,
+        )
+        registry = self.national_registry_product_rows(
+            universe_label,
+            generated_at=generated_at,
+        )
+        return build_district_profile(
+            dashboard,
+            registry,
+            district=district,
+            generated_at=generated_at,
+        )
+
+    def national_sector_profile(
+        self,
+        universe_label: str,
+        sector_family: str,
+        *,
+        generated_at: str,
+    ) -> dict[str, object]:
+        dashboard = self.national_dashboard_payload(
+            universe_label,
+            generated_at=generated_at,
+        )
+        registry = self.national_registry_product_rows(
+            universe_label,
+            generated_at=generated_at,
+        )
+        return build_sector_profile(
+            dashboard,
+            registry,
+            sector_family=sector_family,
+            generated_at=generated_at,
+        )
+
+    def national_profile_drilldown(
+        self,
+        universe_label: str,
+        profile: Mapping[str, object],
+        *,
+        generated_at: str,
+    ) -> list[dict[str, object]]:
+        registry = self.national_registry_product_rows(
+            universe_label,
+            generated_at=generated_at,
+        )
+        return filter_registry_for_profile(registry, profile)
 
     def national_cluster_context(
         self,

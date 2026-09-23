@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.23.0-dev — 2026-09-23
+
+- Added safe national District Profiles and Sector Profiles derived only from approved national product contracts.
+- Added district upazila/status/source-sector/sector-family composition and transparent location-quotient specialization flags.
+- Added sector district distribution, HHI, largest-three/five district shares and source-label composition.
+- Added exact registry versus external-enrichment coverage distinctions.
+- Added registry drill-down filters and safe profile JSON export.
+- Added district/sector profile JSON Schemas and methodology documentation.
+- No real national DIFE snapshot is committed.
+
 ## v0.22.0-dev — 2026-09-23
 
 - Added policy-independent ingestion of fixed private DIFE HTML archives with manifest/hash validation.

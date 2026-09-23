@@ -222,3 +222,46 @@ def test_offline_universe_generates_safe_dashboard_and_registry_products(tmp_pat
         assert "manifest_json" not in serialized
         assert "artifact_path" not in serialized
         assert "source_url" not in serialized
+
+
+def test_offline_universe_generates_district_and_sector_profiles(tmp_path):
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    _write_archive(archive)
+
+    with LocalValidationStore(tmp_path / "national.sqlite") as store:
+        ingest_staged_html_archive(store, archive)
+
+        district = store.national_district_profile(
+            "offline_archive_demo",
+            "গাজীপুর",
+            generated_at="2026-09-24T03:11:00+06:00",
+        )
+        sector = store.national_sector_profile(
+            "offline_archive_demo",
+            "RMG_TEXTILE",
+            generated_at="2026-09-24T03:11:00+06:00",
+        )
+
+        assert district["district"]["name"] == "গাজীপুর"
+        assert district["district"]["establishments"] == 2
+        assert district["drilldown"]["establishment_count"] == 2
+
+        assert sector["sector"]["sector_family"] == "RMG_TEXTILE"
+        assert sector["sector"]["establishments"] == 1
+        assert sector["drilldown"]["establishment_count"] == 1
+
+        drill = store.national_profile_drilldown(
+            "offline_archive_demo",
+            district,
+            generated_at="2026-09-24T03:11:00+06:00",
+        )
+        assert len(drill) == 2
+        assert all(row["district"] == "গাজীপুর" for row in drill)
+        serialized = json.dumps(
+            {"district": district, "sector": sector, "drill": drill},
+            ensure_ascii=False,
+        )
+        assert "source_url" not in serialized
+        assert "snapshot_id" not in serialized
+        assert "artifact_path" not in serialized
