@@ -406,21 +406,38 @@ def ddm_aware_default_aliases(
 ) -> list[GeoAlias]:
     crosswalk = AdministrativeGeographyCrosswalk(units)
     candidates = [
-        ("Jhalokati", "Jhalokathi", "DDM spelling variant"),
-        ("Nawabganj", "Chapai Nawabganj", "DDM shortened district label"),
-        ("Brahmmanbaria", "Brahmanbaria", "BBS/DDM English spelling variant"),
+        (
+            "Jhalokati",
+            ("Jhalokathi", "Jhalakathi"),
+            "DDM/BBS English spelling variant",
+        ),
+        (
+            "Nawabganj",
+            ("Chapai Nawabganj",),
+            "DDM shortened district label",
+        ),
+        (
+            "Brahmanbaria",
+            ("Brahmmanbaria",),
+            "DDM/BBS English spelling variant",
+        ),
     ]
     aliases: list[GeoAlias] = []
-    for alias, canonical_name, note in candidates:
-        match = crosswalk.resolve_district(canonical_name)
-        if match.status == GeoMatchStatus.EXACT_NAME and match.geo_ref:
-            aliases.append(
-                GeoAlias(
-                    level=AdminLevel.DISTRICT,
-                    alias=alias,
-                    geo_ref=match.geo_ref,
-                    source_name="DDM AWARE",
-                    note=note,
+    for ddm_label, canonical_candidates, note in candidates:
+        direct = crosswalk.resolve_district(ddm_label)
+        if direct.status == GeoMatchStatus.EXACT_NAME:
+            continue
+        for canonical_name in canonical_candidates:
+            match = crosswalk.resolve_district(canonical_name)
+            if match.status == GeoMatchStatus.EXACT_NAME and match.geo_ref:
+                aliases.append(
+                    GeoAlias(
+                        level=AdminLevel.DISTRICT,
+                        alias=ddm_label,
+                        geo_ref=match.geo_ref,
+                        source_name="DDM AWARE",
+                        note=note,
+                    )
                 )
-            )
+                break
     return aliases
