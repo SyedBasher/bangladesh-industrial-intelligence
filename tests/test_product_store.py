@@ -108,3 +108,57 @@ def test_validation_feed_contains_only_product_contracts(tmp_path):
             "calculated",
             "evidence",
         }
+
+
+def test_refreshed_external_version_creates_change_signal_only_after_relink(tmp_path):
+    with LocalValidationStore(tmp_path / "validation.sqlite") as store:
+        _prepare(store)
+
+        changed_html = """
+        <h2>Example Garments Ltd.</h2>
+        <table>
+          <tr><th>Factory Address</th><td>Tongi Industrial Area, Gazipur</td></tr>
+          <tr><th>District</th><td>গাজীপুর</td></tr>
+          <tr><th>Upazila</th><td>টঙ্গী</td></tr>
+          <tr><th>Employees</th><td>1,500</td></tr>
+          <tr><th>Machines</th><td>320</td></tr>
+          <tr><th>Production Capacity</th><td>2.8 million pcs/year</td></tr>
+        </table>
+        """
+        staged = store.ingest_external_record_html(
+            "BGMEA",
+            changed_html,
+            source_url="https://www.bgmea.com.bd/member/7001",
+            retrieved_at="2027-09-24T00:48:00+06:00",
+        )
+
+        before_relink = store.product_establishment_payload(
+            "demo",
+            101,
+            generated_at="2027-09-24T00:49:00+06:00",
+        )
+        employment_before = [
+            item for item in before_relink["calculated"]["change_signals"]
+            if item["observation_type"] == "EMPLOYMENT_COUNT"
+        ]
+        assert employment_before == []
+
+        store.review_external_link(
+            "demo",
+            101,
+            int(staged["external_record_id"]),
+            reviewed_at="2027-09-24T00:50:00+06:00",
+        )
+        after_relink = store.product_establishment_payload(
+            "demo",
+            101,
+            generated_at="2027-09-24T00:51:00+06:00",
+        )
+        employment_after = [
+            item for item in after_relink["calculated"]["change_signals"]
+            if item["observation_type"] == "EMPLOYMENT_COUNT"
+        ]
+        assert len(employment_after) == 1
+        assert employment_after[0]["first_value"] == 1250
+        assert employment_after[0]["latest_value"] == 1500
+        assert employment_after[0]["percent_change"] == 20.0
