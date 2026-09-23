@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.15.0-dev — 2026-09-23
+
+- Added BGMEA general-member index parsing with source-reported totals, pagination and stable /member/<id> keys.
+- Added EPB exporter-index parsing for rendered HTML and structured staged JSON, preserving numeric exporter IDs rather than slugs.
+- Added seed-first external index manifests, immutable page snapshots and append-only row versions.
+- Added index QC for duplicate keys, missing names and detail-URL/key integrity.
+- Added targeted external detail-fetch planning from the validated DIFE sample.
+- Added fetch-once/use-many request deduplication when one external record is shortlisted for several DIFE establishments.
+- Added PostgreSQL migration parity for source-index and detail-request structures.
+
 ## v0.14.0-dev — 2026-09-23
 
 - Added scalable local name-block indexing for staged external source records.
