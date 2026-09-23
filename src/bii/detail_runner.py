@@ -75,7 +75,7 @@ def run_ready_detail_checkpoint(
             store.mark_detail_request_failed(
                 validation_label,
                 public_id,
-                resolved_at=collector._now().isoformat(),
+                resolved_at=collector.now_iso(),
                 error_message=str(exc),
             )
             failed += 1
