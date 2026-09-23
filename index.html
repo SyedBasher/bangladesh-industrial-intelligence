@@ -159,6 +159,7 @@ tbody tr:hover,tbody tr.selected{background:#f0f7f3}
     </div>
     <nav class="nav">
       <a class="active" href="#overview">Overview</a>
+      <a href="#national">National geography</a>
       <a href="#registry">Establishments</a>
       <a href="#sources">Source pipeline</a>
       <a href="#method">Methodology</a>
@@ -186,7 +187,7 @@ tbody tr:hover,tbody tr.selected{background:#f0f7f3}
       </p>
 
       <div class="demo-strip">
-        Preview only — no private DIFE validation records or external source extracts are embedded in this file. National snapshot batching, recovery and QC are implemented, but no real national snapshot is represented here and live bulk collection remains policy-gated.
+        Preview only — no private DIFE validation records or external source extracts are embedded in this file. National live batching, fixed-archive ingestion and normalized bulk ingestion are implemented, but no real national snapshot is represented here.
       </div>
 
       <div class="grid kpis">
@@ -207,8 +208,8 @@ tbody tr:hover,tbody tr.selected{background:#f0f7f3}
         </div>
         <div class="card kpi">
           <div class="eyebrow">Current build</div>
-          <strong>v0.21</strong>
-          <span>Restartable national snapshot controller + analytics</span>
+          <strong>v0.22</strong>
+          <span>Offline national ingest + dashboard feeds</span>
         </div>
       </div>
     </section>
@@ -221,12 +222,93 @@ tbody tr:hover,tbody tr.selected{background:#f0f7f3}
         </div>
       </div>
       <div class="grid pipeline">
-        <div class="card pipe"><div class="source">DIFE</div><div class="state">National batching + recovery ready</div></div>
+        <div class="card pipe"><div class="source">DIFE</div><div class="state">Live / archive / bulk routes ready</div></div>
         <div class="card pipe"><div class="source">BGMEA</div><div class="state">Index + detail ready</div></div>
         <div class="card pipe"><div class="source">EPB</div><div class="state">Index + detail ready</div></div>
         <div class="card pipe"><div class="source">BKMEA</div><div class="state">Adapter ready</div></div>
         <div class="card pipe"><div class="source">BEPZA</div><div class="state">Adapter ready</div></div>
         <div class="card pipe"><div class="source">DoE</div><div class="state">Adapter ready</div></div>
+      </div>
+    </section>
+
+
+    <section class="section" id="national">
+      <div class="section-head">
+        <div>
+          <h2>National industrial geography</h2>
+          <p>Synthetic product preview. These figures are illustrative and are not Bangladesh estimates.</p>
+        </div>
+        <span class="badge demo">SYNTHETIC NATIONAL VIEW</span>
+      </div>
+
+      <div class="grid kpis" style="margin-top:0">
+        <div class="card kpi">
+          <div class="eyebrow">Eligible universe</div>
+          <strong>Not loaded</strong>
+          <span>Real national snapshot still pending</span>
+        </div>
+        <div class="card kpi">
+          <div class="eyebrow">Ingestion routes</div>
+          <strong>3</strong>
+          <span>Live · staged HTML · normalized bulk</span>
+        </div>
+        <div class="card kpi">
+          <div class="eyebrow">Dashboard contract</div>
+          <strong>v1.0</strong>
+          <span>Safe national JSON</span>
+        </div>
+        <div class="card kpi">
+          <div class="eyebrow">Registry feed</div>
+          <strong>JSONL</strong>
+          <span>One approved row per DIFE establishment</span>
+        </div>
+      </div>
+
+      <div class="card table-card">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>District</th>
+                <th>Sector family</th>
+                <th>Establishments</th>
+                <th>Share of district</th>
+                <th>Share of national sector</th>
+                <th>Location quotient</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Demo District A</td>
+                <td>RMG & textiles</td>
+                <td>1,240</td>
+                <td>41.3%</td>
+                <td>18.2%</td>
+                <td><strong>1.64</strong></td>
+              </tr>
+              <tr>
+                <td>Demo District B</td>
+                <td>Food & agro</td>
+                <td>620</td>
+                <td>27.8%</td>
+                <td>12.4%</td>
+                <td><strong>1.29</strong></td>
+              </tr>
+              <tr>
+                <td>Demo District C</td>
+                <td>Leather & footwear</td>
+                <td>215</td>
+                <td>16.1%</td>
+                <td>21.7%</td>
+                <td><strong>2.05</strong></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="small" style="margin-top:9px">
+        Location quotient compares a sector's share within a district with that sector's national share.
+        The real dashboard will render this section only from an eligible NATIONAL_REGISTRY universe.
       </div>
     </section>
 
