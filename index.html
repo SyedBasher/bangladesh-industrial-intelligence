@@ -82,7 +82,7 @@ a{color:inherit}
 .section-head{display:flex;align-items:end;justify-content:space-between;gap:18px;margin-bottom:12px}
 .section-head h2{font-size:18px;margin:0;letter-spacing:-.02em}
 .section-head p{font-size:12px;color:var(--muted);margin:3px 0 0}
-.pipeline{grid-template-columns:repeat(6,minmax(0,1fr))}
+.pipeline{grid-template-columns:repeat(4,minmax(0,1fr))}
 .pipe{padding:14px}
 .pipe .source{font-weight:800;font-size:13px;margin-bottom:8px}
 .pipe .state{font-size:12px;color:var(--green2)}
@@ -189,7 +189,7 @@ tbody tr:hover,tbody tr.selected{background:#f0f7f3}
       </p>
 
       <div class="demo-strip">
-        Preview only — no private DIFE validation records or external source extracts are embedded in this file. National live batching, fixed-archive ingestion and normalized bulk ingestion are implemented, but no real national snapshot is represented here.
+        Preview only — no private DIFE validation records, BBS geography extract, DDM AWARE extract or other external source data are embedded in this file. National ingestion and exposure adapters are demonstrated with synthetic values only.
       </div>
 
       <div class="grid kpis">
@@ -210,8 +210,8 @@ tbody tr:hover,tbody tr.selected{background:#f0f7f3}
         </div>
         <div class="card kpi">
           <div class="eyebrow">Current build</div>
-          <strong>v0.24</strong>
-          <span>First-order spatial exposure intelligence</span>
+          <strong>v0.25</strong>
+          <span>BBS geography + DDM AWARE adapter</span>
         </div>
       </div>
     </section>
@@ -225,6 +225,8 @@ tbody tr:hover,tbody tr.selected{background:#f0f7f3}
       </div>
       <div class="grid pipeline">
         <div class="card pipe"><div class="source">DIFE</div><div class="state">National profiles + exposure linkage ready</div></div>
+        <div class="card pipe"><div class="source">BBS</div><div class="state">Canonical geography crosswalk ready</div></div>
+        <div class="card pipe"><div class="source">DDM AWARE</div><div class="state">District risk adapter ready</div></div>
         <div class="card pipe"><div class="source">BGMEA</div><div class="state">Index + detail ready</div></div>
         <div class="card pipe"><div class="source">EPB</div><div class="state">Index + detail ready</div></div>
         <div class="card pipe"><div class="source">BKMEA</div><div class="state">Adapter ready</div></div>
@@ -353,7 +355,7 @@ tbody tr:hover,tbody tr.selected{background:#f0f7f3}
       <div class="section-head">
         <div>
           <h2>First-order exposure context</h2>
-          <p>Synthetic examples showing how site, upazila and district evidence remain distinct.</p>
+          <p>Synthetic examples showing scope-aware evidence. The DDM AWARE district adapter is implemented, but no real DDM values are shown here.</p>
         </div>
         <span class="badge demo">SYNTHETIC EXPOSURE VIEW</span>
       </div>
