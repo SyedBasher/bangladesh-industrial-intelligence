@@ -1,4 +1,5 @@
 from bii.candidate_resolution import (
+    CandidateBlockIndex,
     CandidatePriority,
     CandidateRecord,
     ResolutionOutcome,
@@ -41,6 +42,17 @@ def _external(record_id, source_name="BGMEA", **overrides):
         external_record_id=record_id,
         payload=ExternalRecordPayload(**values),
     )
+
+
+def test_block_index_excludes_unrelated_staged_records():
+    records = [
+        _external(1),
+        _external(2, entity_name="Example Garments Unit 2"),
+        _external(3, entity_name="Completely Different Textiles PLC"),
+    ]
+    index = CandidateBlockIndex.build(records)
+    blocked = index.records_for(_dife())
+    assert [record.external_record_id for record in blocked] == [1, 2]
 
 
 def test_priority_is_explicit_not_hidden_score():
@@ -132,11 +144,11 @@ def test_candidates_without_positive_link_require_review():
         [
             _external(
                 3,
-                entity_name="Example Garments Unit 99",
+                entity_name="Example Holdings",
                 district=None,
                 upazila=None,
                 site_text=None,
             )
         ],
     )
-    assert decision.outcome in {ResolutionOutcome.AUTO_SELECTED, ResolutionOutcome.REVIEW_REQUIRED}
+    assert decision.outcome == ResolutionOutcome.REVIEW_REQUIRED
