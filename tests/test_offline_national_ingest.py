@@ -188,3 +188,37 @@ def test_bulk_row_count_cannot_define_its_own_completeness(tmp_path):
         ).fetchone()
         assert run["status"] == "FAILED"
         assert run["eligible_for_national_analysis"] == 0
+
+
+def test_offline_universe_generates_safe_dashboard_and_registry_products(tmp_path):
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    _write_archive(archive)
+
+    with LocalValidationStore(tmp_path / "national.sqlite") as store:
+        result = ingest_staged_html_archive(store, archive)
+        dashboard = store.national_dashboard_payload(
+            "offline_archive_demo",
+            generated_at="2026-09-24T03:10:00+06:00",
+        )
+        registry = store.national_registry_product_rows(
+            "offline_archive_demo",
+            generated_at="2026-09-24T03:10:00+06:00",
+        )
+
+        assert dashboard["universe"]["ingest_mode"] == "STAGED_HTML_ARCHIVE"
+        assert dashboard["universe"]["expected_total"] == 3
+        assert dashboard["summary"]["establishments"] == 3
+        assert len(registry) == 3
+        assert {row["establishment_ref"] for row in registry} == {
+            "DIFE:101", "DIFE:102", "DIFE:103"
+        }
+
+        serialized = json.dumps(
+            {"dashboard": dashboard, "registry": registry},
+            ensure_ascii=False,
+        )
+        assert str(archive.resolve()) not in serialized
+        assert "manifest_json" not in serialized
+        assert "artifact_path" not in serialized
+        assert "source_url" not in serialized
