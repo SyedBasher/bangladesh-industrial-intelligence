@@ -18,11 +18,11 @@ website / API / static JSON / customer application
 
 The initial contract is:
 
-`schema_version = 1.0`
+`schema_version = 1.1`
 
 A formal JSON Schema is stored at:
 
-`schemas/product_establishment_v1.schema.json`
+`schemas/product_establishment_v1_1.schema.json`\n\nThe v1.0 schema is retained for backward reference.
 
 The contract is storage-provider neutral. It can later be delivered by PostgreSQL, Supabase, Neon, Cloudflare, a conventional API, or a static JSON feed.
 
@@ -186,18 +186,16 @@ Those remain in the research/validation layer.
 
 Only resolved, approved facts and explicitly calculated indicators cross the product boundary.
 
-## 10. Next step
+## 10. Analytical extension in v1.1
 
-With the contract stable, the next layer is the **analytical intelligence engine**.
+The product contract now also permits the calculated fields documented in `docs/ANALYTICAL_INTELLIGENCE.md`:
 
-That should calculate defensible establishment- and location-level measures from the approved evidence, beginning with:
-
-- source completeness;
-- employment/capacity change over source versions;
-- industrial concentration and cluster context;
-- export-product breadth;
 - evidence freshness;
-- cross-source contradiction flags;
-- first-order supplier/location exposure hooks.
+- export/product breadth;
+- cross-source numeric consistency;
+- first-to-latest reported-value change signals;
+- explicitly declared-universe cluster context.
 
-Those indicators can then be surfaced through the same product contract without changing the private data architecture.
+The website still receives only the safe product contract. Historical source rows and private cluster-building inputs remain behind the product boundary.
+
+The next step is to move from validation-sample context toward a **national analytical universe** once the DIFE national snapshot can be staged and validated, then add second-order exposure modules only where public evidence supports them.

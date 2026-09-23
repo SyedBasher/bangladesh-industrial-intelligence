@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mangrove-intelligence.example/schemas/product_establishment_v1_1.schema.json",
+  "title": "Bangladesh Industrial Intelligence Product Establishment v1.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "establishment",
+    "facts",
+    "calculated",
+    "evidence"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.1"
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "establishment": {
+      "$ref": "product_establishment_v1.schema.json#/properties/establishment"
+    },
+    "facts": {
+      "$ref": "product_establishment_v1.schema.json#/properties/facts"
+    },
+    "calculated": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "employment_scale_band",
+        "export_evidence_breadth",
+        "employment_consistency",
+        "evidence_freshness",
+        "export_product_breadth",
+        "external_numeric_consistency",
+        "change_signals",
+        "cluster_context"
+      ],
+      "properties": {
+        "employment_scale_band": {
+          "type": "object"
+        },
+        "export_evidence_breadth": {
+          "type": "object"
+        },
+        "employment_consistency": {
+          "type": "object"
+        },
+        "evidence_freshness": {
+          "type": "object"
+        },
+        "export_product_breadth": {
+          "type": "object"
+        },
+        "external_numeric_consistency": {
+          "type": "object"
+        },
+        "change_signals": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "cluster_context": {
+          "type": "object"
+        }
+      }
+    },
+    "evidence": {
+      "$ref": "product_establishment_v1.schema.json#/properties/evidence"
+    }
+  }
+}

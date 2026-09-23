@@ -207,8 +207,8 @@ tbody tr:hover,tbody tr.selected{background:#f0f7f3}
         </div>
         <div class="card kpi">
           <div class="eyebrow">Current build</div>
-          <strong>v0.18</strong>
-          <span>Safe product contract + calculated diagnostics</span>
+          <strong>v0.19</strong>
+          <span>Analytical intelligence + product contract v1.1</span>
         </div>
       </div>
     </section>
@@ -315,7 +315,7 @@ const records=[
   {
     id:"DEMO-001",name:"Example Knitwear Ltd.",sector:"RMG & textiles",district:"Gazipur",
     upazila:"Tongi",status:"Registered",type:"Factory",workers:"1,240",capacity:"220k dozen/year",
-    product:"Knit garments",machines:"420",hs:"6109 · 6110",markets:"Germany · UK · USA",certs:"LEED · WRAP",vintage:"BGMEA 2026-08 · EPB 2026-09",sources:["DIFE","BGMEA","EPB"],
+    product:"Knit garments",machines:"420",hs:"6109 · 6110",markets:"Germany · UK · USA",certs:"LEED · WRAP",vintage:"BGMEA 2026-08 · EPB 2026-09",freshness:"Current",breadth:"2 HS · 3 markets",consistency:"Employment within 10%",cluster:"Validation-sample context only",sources:["DIFE","BGMEA","EPB"],
     evidence:[
       ["DIFE","Official site","Registered"],
       ["BGMEA","Probable site","Factory profile"],
@@ -325,7 +325,7 @@ const records=[
   {
     id:"DEMO-002",name:"Delta Foods Processing Ltd.",sector:"Food & agro",district:"Narayanganj",
     upazila:"Rupganj",status:"Registered",type:"Factory",workers:"380",capacity:"Source pending",
-    product:"Processed foods",machines:"86",hs:"1905 · 2007",markets:"India · UAE",certs:"Source pending",vintage:"EPB 2026-09",sources:["DIFE","EPB","DoE"],
+    product:"Processed foods",machines:"86",hs:"1905 · 2007",markets:"India · UAE",certs:"Source pending",vintage:"EPB 2026-09",freshness:"Current",breadth:"2 HS · 2 markets",consistency:"Not checked",cluster:"Validation-sample context only",sources:["DIFE","EPB","DoE"],
     evidence:[
       ["DIFE","Official site","Registered"],
       ["EPB","Probable site","Exporter evidence"],
@@ -335,7 +335,7 @@ const records=[
   {
     id:"DEMO-003",name:"Metro Engineering Works",sector:"Engineering & materials",district:"Chattogram",
     upazila:"Sitakunda",status:"Registered",type:"Industrial establishment",workers:"210",capacity:"Source pending",
-    product:"Fabricated metal products",machines:"Source pending",hs:"Organization evidence pending",markets:"Source pending",certs:"Source pending",vintage:"BEPZA demo vintage",sources:["DIFE","BEPZA"],
+    product:"Fabricated metal products",machines:"Source pending",hs:"Organization evidence pending",markets:"Source pending",certs:"Source pending",vintage:"BEPZA demo vintage",freshness:"Unknown",breadth:"Evidence pending",consistency:"Not checked",cluster:"Validation-sample context only",sources:["DIFE","BEPZA"],
     evidence:[
       ["DIFE","Official site","Registered"],
       ["BEPZA","Organization","Enterprise evidence"]
@@ -344,7 +344,7 @@ const records=[
   {
     id:"DEMO-004",name:"Eastern Footwear Industries",sector:"Leather & footwear",district:"Gazipur",
     upazila:"Kaliakair",status:"Registered",type:"Factory",workers:"860",capacity:"1.8m pairs/year",
-    product:"Leather footwear",machines:"170",hs:"6403 · 6404",markets:"Japan · EU",certs:"ISO 9001",vintage:"EPB 2026-09",sources:["DIFE","EPB"],
+    product:"Leather footwear",machines:"170",hs:"6403 · 6404",markets:"Japan · EU",certs:"ISO 9001",vintage:"EPB 2026-09",freshness:"Current",breadth:"2 HS · 2 markets",consistency:"Not checked",cluster:"Validation-sample context only",sources:["DIFE","EPB"],
     evidence:[
       ["DIFE","Official site","Registered"],
       ["EPB","Probable site","Exporter + product evidence"]
@@ -389,6 +389,10 @@ function renderDetail(r){
       <div class="fact"><label>Export markets · organization</label><strong>${r.markets}</strong></div>
       <div class="fact"><label>Certifications · site</label><strong>${r.certs}</strong></div>
       <div class="fact"><label>Source vintage</label><strong>${r.vintage}</strong></div>
+      <div class="fact"><label>Evidence freshness · calculated</label><strong>${r.freshness}</strong></div>
+      <div class="fact"><label>Export breadth · calculated</label><strong>${r.breadth}</strong></div>
+      <div class="fact"><label>Employment consistency · calculated</label><strong>${r.consistency}</strong></div>
+      <div class="fact"><label>Cluster context · calculated</label><strong>${r.cluster}</strong></div>
       <div class="fact"><label>Evidence sources</label><strong>${r.sources.length}</strong></div>
     </div>
     <div class="rule"></div>
@@ -400,7 +404,7 @@ function renderDetail(r){
         </div>`).join("")}
     </div>
     <div class="rule"></div>
-    <div class="small">Production design: site-scoped fields can be attributed to this establishment only after a site-level match. Organization-scoped export evidence remains labeled as organization evidence.</div>
+    <div class="small">Production design: source facts stay separate from calculated intelligence. Current cluster context is explicitly limited to the validation sample and cannot be read as a national concentration estimate.</div>
   `;
 }
 
