@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Mapping
 
 from .candidate_resolution import (
+    CandidateBlockIndex,
     CandidateRecord,
     ResolutionOutcome,
     resolve_shortlist,
@@ -1960,6 +1961,7 @@ class LocalValidationStore:
             )
 
         source_records = self._candidate_records_for_source(source_name)
+        block_index = CandidateBlockIndex.build(source_records)
         with self.conn:
             cursor = self.conn.execute(
                 """INSERT INTO external_candidate_runs(
@@ -1995,9 +1997,10 @@ class LocalValidationStore:
         for target in targets:
             dife_public_id = int(target["dife_public_id"])
             dife = self._dife_match_record(validation_label, dife_public_id)
+            blocked_records = block_index.records_for(dife)
             signals = shortlist_candidates(
                 dife,
-                source_records,
+                blocked_records,
                 max_candidates=max_candidates,
             )
             shortlisted = [
