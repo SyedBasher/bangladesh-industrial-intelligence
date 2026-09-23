@@ -99,6 +99,18 @@ def run_national_snapshot_batch(
     raw_directory.mkdir(parents=True, exist_ok=True)
 
     started_at = collector.now_iso()
+    try:
+        store.national_ingest_source(universe_id)
+    except KeyError:
+        store.record_national_ingest_source(
+            universe_id,
+            ingest_mode="LIVE_PAGINATED",
+            artifact_path=None,
+            artifact_sha256=None,
+            manifest_json=None,
+            imported_at=started_at,
+        )
+
     _ensure_manifest_expanded_if_seed_staged(
         store,
         universe_id,
