@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
+import json
+from pathlib import Path
 from enum import StrEnum
 from typing import Iterable, Mapping
 
@@ -504,3 +506,17 @@ def build_sector_exposure_profile(
     }
     assert_national_product_safe(payload)
     return payload
+
+
+def write_exposure_profile_json(
+    profile: Mapping[str, object],
+    path: str | Path,
+) -> Path:
+    assert_national_product_safe(profile)
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(
+        json.dumps(dict(profile), ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    return destination
