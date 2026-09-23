@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from collections import defaultdict
 from typing import Iterable
 
 from .enrichment import (
@@ -77,6 +78,55 @@ def name_token_overlap(left: str | None, right: str | None) -> float | None:
         return None
     return len(a & b) / len(a | b)
 
+
+
+
+@dataclass
+class CandidateBlockIndex:
+    """In-memory blocking index for staged external records.
+
+    Blocking is retrieval only, not a match decision. A record enters the candidate
+    pool when it shares an exact normalized company core or at least one informative
+    normalized company-name token with the DIFE establishment.
+    """
+
+    records_by_id: dict[int, CandidateRecord]
+    exact_core: dict[str, set[int]]
+    token_index: dict[str, set[int]]
+
+    @classmethod
+    def build(cls, records: Iterable[CandidateRecord]) -> "CandidateBlockIndex":
+        records_by_id: dict[int, CandidateRecord] = {}
+        exact_core: dict[str, set[int]] = defaultdict(set)
+        token_index: dict[str, set[int]] = defaultdict(set)
+
+        for record in records:
+            records_by_id[record.external_record_id] = record
+            core = normalize_company_core(record.payload.entity_name)
+            if core:
+                exact_core[core].add(record.external_record_id)
+                for token in _tokens(core):
+                    token_index[token].add(record.external_record_id)
+
+        return cls(
+            records_by_id=records_by_id,
+            exact_core=dict(exact_core),
+            token_index=dict(token_index),
+        )
+
+    def records_for(self, dife: DifeMatchRecord) -> list[CandidateRecord]:
+        core = normalize_company_core(dife.name)
+        if not core:
+            return []
+
+        candidate_ids = set(self.exact_core.get(core, set()))
+        for token in _tokens(core):
+            candidate_ids.update(self.token_index.get(token, set()))
+
+        return [
+            self.records_by_id[record_id]
+            for record_id in sorted(candidate_ids)
+        ]
 
 def candidate_priority(
     dife: DifeMatchRecord,
