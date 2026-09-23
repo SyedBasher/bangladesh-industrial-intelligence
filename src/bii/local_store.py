@@ -4,6 +4,7 @@ import sqlite3
 from dataclasses import asdict
 from pathlib import Path
 
+from .discovery import DiscoveryRequest, candidate_pool_health
 from .hashutil import sha256_text
 from .parsers import parse_dife_list_page
 from .sampling import ValidationCandidate, select_validation_sample
@@ -23,6 +24,23 @@ CREATE TABLE IF NOT EXISTS source_snapshots (
     raw_payload_path TEXT,
     parser_version TEXT NOT NULL,
     UNIQUE(source_name, source_url, content_sha256)
+);
+
+CREATE TABLE IF NOT EXISTS discovery_requests (
+    request_id INTEGER PRIMARY KEY,
+    plan_label TEXT NOT NULL,
+    sector_family TEXT NOT NULL,
+    source_sector_value TEXT NOT NULL,
+    source_sector_label TEXT NOT NULL,
+    page INTEGER NOT NULL,
+    source_url TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PLANNED'
+        CHECK(status IN ('PLANNED','STAGED','FAILED','SKIPPED')),
+    planned_at TEXT NOT NULL,
+    staged_snapshot_id INTEGER REFERENCES source_snapshots(snapshot_id),
+    error_message TEXT,
+    UNIQUE(plan_label, source_url)
 );
 
 CREATE TABLE IF NOT EXISTS establishments (
@@ -57,6 +75,8 @@ CREATE TABLE IF NOT EXISTS validation_sample (
     PRIMARY KEY(validation_label, dife_public_id)
 );
 
+CREATE INDEX IF NOT EXISTS discovery_plan_status_idx
+    ON discovery_requests(plan_label, status);
 CREATE INDEX IF NOT EXISTS obs_public_id_idx
     ON establishment_observations(dife_public_id, observation_id DESC);
 CREATE INDEX IF NOT EXISTS obs_sector_idx
@@ -95,6 +115,76 @@ class LocalValidationStore:
     def integrity_check(self) -> str:
         return str(self.conn.execute("PRAGMA integrity_check").fetchone()[0])
 
+    def record_discovery_requests(
+        self,
+        plan_label: str,
+        requests: list[DiscoveryRequest],
+        *,
+        planned_at: str,
+    ) -> int:
+        """Persist an auditable manifest before any page is staged."""
+        self.conn.executemany(
+            """INSERT OR IGNORE INTO discovery_requests(
+                   plan_label, sector_family, source_sector_value, source_sector_label,
+                   page, source_url, reason, status, planned_at
+               ) VALUES(?,?,?,?,?,?,?,?,?)""",
+            [
+                (
+                    plan_label,
+                    request.sector_family,
+                    request.source_sector_value,
+                    request.source_sector_label,
+                    request.page,
+                    request.source_url,
+                    request.reason,
+                    "PLANNED",
+                    planned_at,
+                )
+                for request in requests
+            ],
+        )
+        self.conn.commit()
+        return int(
+            self.conn.execute(
+                "SELECT COUNT(*) FROM discovery_requests WHERE plan_label=?",
+                (plan_label,),
+            ).fetchone()[0]
+        )
+
+    def mark_discovery_request(
+        self,
+        plan_label: str,
+        source_url: str,
+        *,
+        status: str,
+        snapshot_id: int | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        if status not in {"PLANNED", "STAGED", "FAILED", "SKIPPED"}:
+            raise ValueError(f"unsupported discovery status: {status}")
+        if status == "STAGED" and snapshot_id is None:
+            raise ValueError("STAGED discovery requests require a snapshot_id")
+        cursor = self.conn.execute(
+            """UPDATE discovery_requests
+               SET status=?, staged_snapshot_id=?, error_message=?
+               WHERE plan_label=? AND source_url=?""",
+            (status, snapshot_id, error_message, plan_label, source_url),
+        )
+        if cursor.rowcount != 1:
+            raise KeyError(f"discovery request not found: {plan_label} {source_url}")
+        self.conn.commit()
+
+    def discovery_status_counts(self, plan_label: str) -> dict[str, int]:
+        rows = self.conn.execute(
+            """SELECT status, COUNT(*) AS n
+               FROM discovery_requests
+               WHERE plan_label=?
+               GROUP BY status
+               ORDER BY status""",
+            (plan_label,),
+        ).fetchall()
+        return {str(row["status"]): int(row["n"]) for row in rows}
+
     def ingest_dife_list_html(
         self,
         html: str,
@@ -102,7 +192,7 @@ class LocalValidationStore:
         source_url: str,
         retrieved_at: str,
         raw_payload_path: str | None = None,
-        parser_version: str = "0.7",
+        parser_version: str = "0.8",
     ) -> dict[str, int | str | None]:
         """Parse and persist one already-obtained public DIFE list page.
 
@@ -192,6 +282,9 @@ class LocalValidationStore:
             )
             for row in rows
         ]
+
+    def candidate_pool_health(self) -> dict[str, object]:
+        return candidate_pool_health(self.validation_candidates())
 
     def freeze_validation_sample(
         self,
