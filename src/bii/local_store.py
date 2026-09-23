@@ -860,7 +860,113 @@ class LocalValidationStore:
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.executescript(_LOCAL_SCHEMA)
+        self._upgrade_spatial_exposure_schema_v25()
         self.conn.commit()
+
+    def _upgrade_spatial_exposure_schema_v25(self) -> None:
+        row = self.conn.execute(
+            """SELECT sql FROM sqlite_master
+               WHERE type='table' AND name='spatial_exposure_observations'"""
+        ).fetchone()
+        if row is None:
+            return
+        table_sql = str(row["sql"] or "")
+        columns = {
+            str(item["name"])
+            for item in self.conn.execute(
+                "PRAGMA table_info(spatial_exposure_observations)"
+            ).fetchall()
+        }
+        required_new = {
+            "canonical_geo_ref",
+            "geography_match_type",
+            "source_geography_label",
+        }
+        needs_rebuild = "DISASTER_RISK" not in table_sql
+
+        if not needs_rebuild:
+            for column in sorted(required_new - columns):
+                self.conn.execute(
+                    f"ALTER TABLE spatial_exposure_observations "
+                    f"ADD COLUMN {column} TEXT"
+                )
+            return
+
+        self.conn.execute("DROP INDEX IF EXISTS spatial_exposure_source_idx")
+        self.conn.execute("DROP INDEX IF EXISTS spatial_exposure_district_idx")
+        self.conn.execute("DROP INDEX IF EXISTS spatial_exposure_site_idx")
+        self.conn.execute(
+            """ALTER TABLE spatial_exposure_observations
+               RENAME TO spatial_exposure_observations_v24"""
+        )
+        self.conn.execute(
+            """CREATE TABLE spatial_exposure_observations (
+                   exposure_observation_id INTEGER PRIMARY KEY,
+                   source_name TEXT NOT NULL REFERENCES spatial_exposure_sources(source_name),
+                   domain TEXT NOT NULL CHECK(domain IN (
+                       'CLIMATE_HAZARD','DISASTER_RISK','TRANSPORT_ACCESS',
+                       'POWER_SYSTEM','ENVIRONMENTAL_REGULATORY'
+                   )),
+                   metric_code TEXT NOT NULL,
+                   metric_label TEXT NOT NULL,
+                   spatial_scope TEXT NOT NULL CHECK(spatial_scope IN ('SITE','UPAZILA','DISTRICT')),
+                   establishment_ref TEXT,
+                   district TEXT,
+                   upazila TEXT,
+                   value_text TEXT,
+                   value_numeric REAL,
+                   unit TEXT,
+                   direction TEXT NOT NULL CHECK(direction IN (
+                       'HIGHER_MEANS_MORE_EXPOSURE','HIGHER_MEANS_LESS_EXPOSURE','CONTEXT_ONLY'
+                   )),
+                   source_vintage TEXT,
+                   observed_at TEXT,
+                   evidence_note TEXT,
+                   canonical_geo_ref TEXT,
+                   geography_match_type TEXT,
+                   source_geography_label TEXT,
+                   observation_sha256 TEXT NOT NULL,
+                   UNIQUE(source_name, observation_sha256)
+               )"""
+        )
+        legacy_columns = [
+            "exposure_observation_id",
+            "source_name",
+            "domain",
+            "metric_code",
+            "metric_label",
+            "spatial_scope",
+            "establishment_ref",
+            "district",
+            "upazila",
+            "value_text",
+            "value_numeric",
+            "unit",
+            "direction",
+            "source_vintage",
+            "observed_at",
+            "evidence_note",
+            "observation_sha256",
+        ]
+        joined = ", ".join(legacy_columns)
+        self.conn.execute(
+            f"""INSERT INTO spatial_exposure_observations({joined})
+                SELECT {joined}
+                FROM spatial_exposure_observations_v24"""
+        )
+        self.conn.execute("DROP TABLE spatial_exposure_observations_v24")
+        self.conn.execute(
+            """CREATE INDEX IF NOT EXISTS spatial_exposure_source_idx
+               ON spatial_exposure_observations(source_name, domain, metric_code)"""
+        )
+        self.conn.execute(
+            """CREATE INDEX IF NOT EXISTS spatial_exposure_district_idx
+               ON spatial_exposure_observations(district, upazila, spatial_scope)"""
+        )
+        self.conn.execute(
+            """CREATE INDEX IF NOT EXISTS spatial_exposure_site_idx
+               ON spatial_exposure_observations(establishment_ref, spatial_scope)"""
+        )
 
     def close(self) -> None:
         self.conn.close()
