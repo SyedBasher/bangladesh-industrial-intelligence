@@ -2314,6 +2314,7 @@ class LocalValidationStore:
         dife_public_id: int,
         *,
         generated_at: str,
+        national_universe_label: str | None = None,
     ) -> dict[str, object]:
         """Build the safe v1 product representation for one establishment."""
         base = self._product_base_record(validation_label, dife_public_id)
@@ -2325,16 +2326,23 @@ class LocalValidationStore:
             validation_label,
             dife_public_id,
         )
-        sample_cluster = self.validation_sample_cluster_context(
-            validation_label,
-            dife_public_id,
+        cluster = (
+            self.national_cluster_context(
+                national_universe_label,
+                dife_public_id,
+            )
+            if national_universe_label is not None
+            else self.validation_sample_cluster_context(
+                validation_label,
+                dife_public_id,
+            )
         )
         return build_product_payload(
             base,
             observations,
             generated_at=generated_at,
             history=history,
-            cluster_context=sample_cluster,
+            cluster_context=cluster,
         )
 
     def product_validation_feed(
@@ -2342,6 +2350,7 @@ class LocalValidationStore:
         validation_label: str,
         *,
         generated_at: str,
+        national_universe_label: str | None = None,
     ) -> list[dict[str, object]]:
         """Build a safe product feed without exposing internal database identifiers."""
         rows = self.conn.execute(
@@ -2358,6 +2367,7 @@ class LocalValidationStore:
                 validation_label,
                 int(row["dife_public_id"]),
                 generated_at=generated_at,
+                national_universe_label=national_universe_label,
             )
             for row in rows
         ]
