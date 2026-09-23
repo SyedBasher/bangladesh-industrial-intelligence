@@ -1457,17 +1457,30 @@ class LocalValidationStore:
                 ),
             )
 
+    def _ensure_external_source_profile(self, source_name: str) -> None:
+        existing = self.conn.execute(
+            "SELECT 1 FROM external_source_profiles WHERE source_name=?",
+            (source_name.upper(),),
+        ).fetchone()
+        if existing is None:
+            self.register_external_source_profile(source_name)
+
     def register_default_external_sources(
         self,
         *,
         last_verified_at: str | None = None,
     ) -> int:
         for source_name in SOURCE_SPECS:
-            self.register_external_source_profile(
-                source_name,
-                last_verified_at=last_verified_at,
-                notes="Public source capability profile; live automation permission remains source-specific.",
-            )
+            existing = self.conn.execute(
+                "SELECT 1 FROM external_source_profiles WHERE source_name=?",
+                (source_name,),
+            ).fetchone()
+            if existing is None:
+                self.register_external_source_profile(
+                    source_name,
+                    last_verified_at=last_verified_at,
+                    notes="Public source capability profile; live automation permission remains source-specific.",
+                )
         return len(SOURCE_SPECS)
 
     def plan_enrichment_targets(
@@ -1478,7 +1491,7 @@ class LocalValidationStore:
         planned_at: str,
     ) -> dict[str, int]:
         """Create source-specific targets without interpreting absence as a negative fact."""
-        self.register_external_source_profile(source_name)
+        self._ensure_external_source_profile(source_name)
         rows = self.conn.execute(
             """SELECT dife_public_id, sector_family
                FROM validation_sample
@@ -1537,7 +1550,7 @@ class LocalValidationStore:
         retrieved_at: str,
     ) -> dict[str, object]:
         """Stage a public external record and append a content-addressed version."""
-        self.register_external_source_profile(source_name)
+        self._ensure_external_source_profile(source_name)
         payload = parse_external_record(source_name, html, source_url)
         content_hash = sha256_text(html)
 
@@ -1774,8 +1787,10 @@ class LocalValidationStore:
 
         staged = int(
             self.conn.execute(
-                "SELECT COUNT(*) FROM external_source_records WHERE source_name=?",
-                (source_name,),
+                """SELECT COUNT(DISTINCT external_record_id)
+                   FROM entity_links
+                   WHERE validation_label=? AND source_name=?""",
+                (validation_label, source_name),
             ).fetchone()[0]
         )
 
