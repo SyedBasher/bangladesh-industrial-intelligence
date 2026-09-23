@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.12.0-dev — 2026-09-23
+
+- Added list-to-detail anomaly detection for district, status, sector, class and name variation.
+- Added versioned validation reports with sector and geography breakdowns.
+- Added automatic progressive detail validation: 100 → 500 → 2,000 without manual pauses when each QC gate passes.
+- The controller stops at the first failed gate and never overrides locked checkpoints.
+- Added PostgreSQL migration parity for validation reports and anomaly records.
+
 ## v0.11.0-dev — 2026-09-23
 
 - Added an explicit source-access policy gate; public visibility alone cannot enable live collection.
