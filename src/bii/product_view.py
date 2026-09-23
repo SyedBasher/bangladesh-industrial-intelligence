@@ -3,8 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Mapping
 
+from .analytical_intelligence import (
+    evidence_freshness,
+    export_product_breadth,
+    numeric_change_signals,
+    numeric_source_consistency,
+)
 
-SCHEMA_VERSION = "1.0"
+
+SCHEMA_VERSION = "1.1"
 
 APPROVED_OBSERVATION_TYPES = frozenset({
     "EMPLOYMENT_COUNT",
@@ -233,6 +240,8 @@ def build_product_payload(
     observations: Iterable[Mapping[str, object]],
     *,
     generated_at: str,
+    history: Iterable[Mapping[str, object]] = (),
+    cluster_context: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     evidence = _approved_evidence(observations)
 
@@ -282,6 +291,26 @@ def build_product_payload(
             "employment_scale_band": _employment_band(analytical_employment),
             "export_evidence_breadth": _export_breadth(evidence),
             "employment_consistency": _employment_consistency(base.worker_total, evidence),
+            "evidence_freshness": evidence_freshness(evidence, as_of=generated_at),
+            "export_product_breadth": export_product_breadth(evidence),
+            "external_numeric_consistency": {
+                observation_type: numeric_source_consistency(evidence, observation_type)
+                for observation_type in (
+                    "EMPLOYMENT_COUNT",
+                    "MACHINE_COUNT",
+                    "PRODUCTION_CAPACITY",
+                )
+            },
+            "change_signals": numeric_change_signals(history),
+            "cluster_context": (
+                dict(cluster_context)
+                if cluster_context is not None
+                else {
+                    "status": "NOT_AVAILABLE",
+                    "origin": "CALCULATED",
+                    "rule": "Cluster context requires an explicitly declared comparison universe.",
+                }
+            ),
         },
         "evidence": evidence,
     }
