@@ -61,6 +61,9 @@ class PoliteHttpCollector:
     def minimum_interval_seconds(self) -> float:
         return 60.0 / self.policy.requests_per_minute
 
+    def now_iso(self) -> str:
+        return self._now().isoformat()
+
     def _rate_limit(self) -> None:
         now = self._monotonic()
         if self._last_request_at is not None:
