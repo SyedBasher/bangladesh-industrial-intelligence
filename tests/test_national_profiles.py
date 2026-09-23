@@ -8,6 +8,7 @@ from bii.national_profiles import (
     build_district_profile,
     build_sector_profile,
     filter_registry_for_profile,
+    write_national_profile_json,
 )
 from bii.national_universe import build_national_rollups
 
@@ -186,3 +187,19 @@ def test_unknown_profile_dimension_fails_explicitly():
             sector_family="NOT_A_REAL_FAMILY",
             generated_at="2026-09-24T05:11:00+06:00",
         )
+
+
+def test_profile_json_writer_preserves_safe_contract(tmp_path):
+    dashboard, registry = _safe_inputs()
+    profile = build_district_profile(
+        dashboard,
+        registry,
+        district="Gazipur",
+        generated_at="2026-09-24T05:11:00+06:00",
+    )
+    path = write_national_profile_json(profile, tmp_path / "gazipur.json")
+    loaded = __import__("json").loads(path.read_text(encoding="utf-8"))
+    assert loaded["district"]["name"] == "Gazipur"
+    serialized = path.read_text(encoding="utf-8")
+    for forbidden in ("source_url", "snapshot_id", "universe_id", "artifact_path"):
+        assert forbidden not in serialized
