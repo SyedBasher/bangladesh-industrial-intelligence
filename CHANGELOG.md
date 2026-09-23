@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.24.0-dev — 2026-09-24
+
+- Added scope-aware first-order spatial exposure observations for climate hazards, transport access, power-system context and environmental/regulatory evidence.
+- Added explicit SITE, UPAZILA and DISTRICT scopes with SITE_SPECIFIC, UPAZILA_CONTEXT and DISTRICT_CONTEXT attribution.
+- Added exact-only geographic matching in v1; no fuzzy place-name inference.
+- Added evidence-coverage calculations that explicitly do not represent risk prevalence.
+- Added establishment, district and sector exposure profiles using establishment-count weighting only.
+- Added private exposure-source provenance and safe product APIs that exclude private references and internal IDs.
+- Added PostgreSQL migration parity, product schemas and methodology documentation.
+- No real exposure dataset or second-order supply-chain propagation is committed.
+
 ## v0.23.0-dev — 2026-09-23
 
 - Added safe national District Profiles and Sector Profiles derived only from approved national product contracts.
