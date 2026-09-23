@@ -35,5 +35,5 @@ def test_write_safe_json_and_jsonl(tmp_path):
     assert loaded[0]["establishment"]["establishment_ref"] == "DIFE:101"
 
     line = json.loads(jsonl_path.read_text(encoding="utf-8").strip())
-    assert line["schema_version"] == "1.0"
+    assert line["schema_version"] == "1.1"
     assert "snapshot_id" not in jsonl_path.read_text(encoding="utf-8")
