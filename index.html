@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bangladesh Industrial Intelligence — Preview</title>
+<meta name="description" content="Development preview of the Bangladesh Industrial Intelligence platform by Mangrove Intelligence.">
+<style>
+:root{
+  --ink:#13231d;
+  --muted:#66736d;
+  --line:#dfe7e2;
+  --soft:#f4f7f5;
+  --panel:#ffffff;
+  --green:#176b4a;
+  --green2:#0e5137;
+  --pale:#eaf4ef;
+  --amber:#9a6a16;
+  --amberbg:#fff6df;
+  --red:#9b3434;
+  --redbg:#fff0f0;
+  --blue:#2f5f8f;
+  --bluebg:#eef5fb;
+  --shadow:0 10px 30px rgba(21,46,36,.07);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  color:var(--ink);
+  background:#f7f9f8;
+}
+button,input,select{font:inherit}
+a{color:inherit}
+.shell{min-height:100vh;display:grid;grid-template-columns:250px minmax(0,1fr)}
+.sidebar{
+  position:sticky;top:0;height:100vh;background:#10291f;color:#eef7f2;
+  padding:28px 20px;display:flex;flex-direction:column;gap:26px
+}
+.brand{display:flex;gap:12px;align-items:center}
+.mark{
+  width:42px;height:42px;border:1px solid rgba(255,255,255,.25);
+  display:grid;place-items:center;font-weight:800;letter-spacing:-1px
+}
+.brand small{display:block;color:#a9c6b9;margin-top:2px}
+.nav{display:grid;gap:7px}
+.nav a{
+  text-decoration:none;color:#cbe0d6;padding:10px 12px;border-radius:4px;
+  font-size:14px
+}
+.nav a.active,.nav a:hover{background:rgba(255,255,255,.08);color:white}
+.sidebar-note{
+  margin-top:auto;border-top:1px solid rgba(255,255,255,.12);padding-top:18px;
+  color:#a9c6b9;font-size:12px;line-height:1.55
+}
+.main{padding:0 34px 48px;min-width:0}
+.topbar{
+  height:72px;display:flex;align-items:center;justify-content:space-between;
+  border-bottom:1px solid var(--line);margin-bottom:28px
+}
+.eyebrow{text-transform:uppercase;letter-spacing:.12em;font-size:11px;color:var(--muted);font-weight:700}
+.title{font-size:31px;line-height:1.1;margin:5px 0 7px;letter-spacing:-.035em}
+.subtitle{margin:0;color:var(--muted);max-width:760px;line-height:1.55}
+.badge{
+  display:inline-flex;align-items:center;gap:6px;padding:6px 9px;border-radius:999px;
+  font-size:11px;font-weight:700;letter-spacing:.03em
+}
+.badge.demo{background:var(--amberbg);color:var(--amber)}
+.badge.good{background:var(--pale);color:var(--green2)}
+.badge.info{background:var(--bluebg);color:var(--blue)}
+.badge.warn{background:var(--redbg);color:var(--red)}
+.grid{display:grid;gap:16px}
+.kpis{grid-template-columns:repeat(4,minmax(0,1fr));margin:24px 0}
+.card{
+  background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow);
+  border-radius:7px;padding:18px
+}
+.kpi strong{display:block;font-size:26px;letter-spacing:-.03em;margin:10px 0 4px}
+.kpi span{font-size:12px;color:var(--muted)}
+.section{margin-top:26px}
+.section-head{display:flex;align-items:end;justify-content:space-between;gap:18px;margin-bottom:12px}
+.section-head h2{font-size:18px;margin:0;letter-spacing:-.02em}
+.section-head p{font-size:12px;color:var(--muted);margin:3px 0 0}
+.pipeline{grid-template-columns:repeat(6,minmax(0,1fr))}
+.pipe{padding:14px}
+.pipe .source{font-weight:800;font-size:13px;margin-bottom:8px}
+.pipe .state{font-size:12px;color:var(--green2)}
+.filters{display:grid;grid-template-columns:minmax(220px,1fr) 190px 190px;gap:10px;margin-bottom:12px}
+.field{
+  width:100%;border:1px solid #ccd8d1;background:white;border-radius:5px;
+  padding:10px 12px;color:var(--ink);outline:none
+}
+.field:focus{border-color:#7da993;box-shadow:0 0 0 3px rgba(23,107,74,.08)}
+.registry{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(320px,.8fr);gap:16px}
+.table-card{padding:0;overflow:hidden}
+.table-wrap{overflow:auto}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th{
+  text-align:left;background:#f3f6f4;color:#5f6d66;font-size:11px;text-transform:uppercase;
+  letter-spacing:.06em;padding:11px 13px;border-bottom:1px solid var(--line);white-space:nowrap
+}
+td{padding:12px 13px;border-bottom:1px solid #edf1ef;vertical-align:top}
+tbody tr{cursor:pointer}
+tbody tr:hover,tbody tr.selected{background:#f0f7f3}
+.company{font-weight:700}
+.small{font-size:11px;color:var(--muted);margin-top:3px}
+.source-tags{display:flex;flex-wrap:wrap;gap:5px}
+.tag{padding:3px 6px;background:#eef3f0;border-radius:3px;font-size:10px;color:#4c5d55}
+.detail{min-height:480px}
+.detail h3{font-size:20px;margin:4px 0}
+.detail .location{color:var(--muted);font-size:13px;margin-bottom:18px}
+.rule{height:1px;background:var(--line);margin:16px 0}
+.fact-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.fact label{display:block;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px}
+.fact strong{font-size:13px}
+.evidence{display:grid;gap:8px;margin-top:10px}
+.evidence-row{
+  display:grid;grid-template-columns:62px 1fr auto;gap:10px;align-items:center;
+  padding:9px 10px;background:var(--soft);border-radius:4px;font-size:12px
+}
+.evidence-row b{font-size:11px}
+.empty{padding:34px;text-align:center;color:var(--muted)}
+.footer{
+  margin-top:30px;padding:18px 0 0;border-top:1px solid var(--line);
+  color:var(--muted);font-size:11px;line-height:1.6
+}
+.demo-strip{
+  background:#fff7e4;border:1px solid #ecd79c;color:#76581a;
+  border-radius:5px;padding:10px 12px;font-size:12px;margin:18px 0
+}
+.mobile-brand{display:none}
+@media(max-width:1050px){
+  .shell{grid-template-columns:1fr}
+  .sidebar{display:none}
+  .main{padding:0 18px 38px}
+  .mobile-brand{display:block;font-weight:800}
+  .kpis{grid-template-columns:repeat(2,1fr)}
+  .pipeline{grid-template-columns:repeat(3,1fr)}
+  .registry{grid-template-columns:1fr}
+}
+@media(max-width:650px){
+  .topbar{height:auto;padding:16px 0;align-items:flex-start}
+  .title{font-size:25px}
+  .kpis{grid-template-columns:1fr 1fr}
+  .pipeline{grid-template-columns:1fr 1fr}
+  .filters{grid-template-columns:1fr}
+  .fact-grid{grid-template-columns:1fr}
+  th:nth-child(3),td:nth-child(3){display:none}
+}
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="mark">MI</div>
+      <div><strong>Mangrove Intelligence</strong><small>Industrial Intelligence</small></div>
+    </div>
+    <nav class="nav">
+      <a class="active" href="#overview">Overview</a>
+      <a href="#registry">Establishments</a>
+      <a href="#sources">Source pipeline</a>
+      <a href="#method">Methodology</a>
+    </nav>
+    <div class="sidebar-note">
+      Development preview<br>
+      Public code, private data architecture.<br><br>
+      DIFE is the establishment backbone. External sources add evidence without overwriting official source observations.
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div class="mobile-brand">Mangrove Intelligence</div>
+      <span class="badge demo">DEMO DATA</span>
+    </div>
+
+    <section id="overview">
+      <div class="eyebrow">Bangladesh Industrial Intelligence</div>
+      <h1 class="title">From factory registry to industrial intelligence.</h1>
+      <p class="subtitle">
+        A source-traceable view of establishments, industrial geography, export evidence,
+        capacity, employment and regulatory signals. This screen is a development preview;
+        the records below are synthetic and do not represent real companies.
+      </p>
+
+      <div class="demo-strip">
+        Preview only — no private DIFE validation records or external source extracts are embedded in this file.
+      </div>
+
+      <div class="grid kpis">
+        <div class="card kpi">
+          <div class="eyebrow">Validation design</div>
+          <strong>2,000</strong>
+          <span>Joint sector × geography sample</span>
+        </div>
+        <div class="card kpi">
+          <div class="eyebrow">Detail QA</div>
+          <strong>100 → 500 → 2,000</strong>
+          <span>Automatic gated progression</span>
+        </div>
+        <div class="card kpi">
+          <div class="eyebrow">Enrichment sources</div>
+          <strong>5</strong>
+          <span>EPB · BGMEA · BKMEA · BEPZA · DoE</span>
+        </div>
+        <div class="card kpi">
+          <div class="eyebrow">Current build</div>
+          <strong>v0.16</strong>
+          <span>Detail orchestration + product preview</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="sources">
+      <div class="section-head">
+        <div>
+          <h2>Source pipeline</h2>
+          <p>Architecture readiness, not empirical coverage.</p>
+        </div>
+      </div>
+      <div class="grid pipeline">
+        <div class="card pipe"><div class="source">DIFE</div><div class="state">Backbone ready</div></div>
+        <div class="card pipe"><div class="source">BGMEA</div><div class="state">Index + detail ready</div></div>
+        <div class="card pipe"><div class="source">EPB</div><div class="state">Index + detail ready</div></div>
+        <div class="card pipe"><div class="source">BKMEA</div><div class="state">Adapter ready</div></div>
+        <div class="card pipe"><div class="source">BEPZA</div><div class="state">Adapter ready</div></div>
+        <div class="card pipe"><div class="source">DoE</div><div class="state">Adapter ready</div></div>
+      </div>
+    </section>
+
+    <section class="section" id="registry">
+      <div class="section-head">
+        <div>
+          <h2>Establishment intelligence</h2>
+          <p>Searchable product concept using synthetic records.</p>
+        </div>
+        <span id="resultCount" class="badge info">4 demo records</span>
+      </div>
+
+      <div class="filters">
+        <input id="search" class="field" placeholder="Search establishment, district or product">
+        <select id="sector" class="field">
+          <option value="">All sectors</option>
+          <option>RMG & textiles</option>
+          <option>Food & agro</option>
+          <option>Engineering & materials</option>
+          <option>Leather & footwear</option>
+        </select>
+        <select id="district" class="field">
+          <option value="">All districts</option>
+          <option>Gazipur</option>
+          <option>Narayanganj</option>
+          <option>Chattogram</option>
+        </select>
+      </div>
+
+      <div class="registry">
+        <div class="card table-card">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Establishment</th>
+                  <th>Sector</th>
+                  <th>District</th>
+                  <th>Source evidence</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="rows"></tbody>
+            </table>
+          </div>
+        </div>
+        <aside class="card detail" id="detail"></aside>
+      </div>
+    </section>
+
+    <section class="section" id="method">
+      <div class="section-head">
+        <div>
+          <h2>How the intelligence is built</h2>
+          <p>The interface keeps source observations and calculated intelligence separate.</p>
+        </div>
+      </div>
+      <div class="grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+        <div class="card">
+          <div class="eyebrow">1 · Backbone</div>
+          <h3 style="margin:8px 0 6px;font-size:15px">Establishment first</h3>
+          <p class="small" style="line-height:1.6">DIFE observations remain source-specific and versioned. Licence expiry is not treated as closure.</p>
+        </div>
+        <div class="card">
+          <div class="eyebrow">2 · Resolution</div>
+          <h3 style="margin:8px 0 6px;font-size:15px">Site ≠ organization</h3>
+          <p class="small" style="line-height:1.6">External records are linked only with explicit name, geography and address evidence. Ambiguity remains visible.</p>
+        </div>
+        <div class="card">
+          <div class="eyebrow">3 · Intelligence</div>
+          <h3 style="margin:8px 0 6px;font-size:15px">Evidence before inference</h3>
+          <p class="small" style="line-height:1.6">Products, capacity, employment, export and environmental fields retain their source and vintage.</p>
+        </div>
+      </div>
+    </section>
+
+    <div class="footer">
+      Bangladesh Industrial Intelligence · Mangrove Intelligence · Development preview.<br>
+      Synthetic records are used in this standalone file. Production data remains outside the public GitHub repository.
+    </div>
+  </main>
+</div>
+
+<script>
+const records=[
+  {
+    id:"DEMO-001",name:"Example Knitwear Ltd.",sector:"RMG & textiles",district:"Gazipur",
+    upazila:"Tongi",status:"Registered",type:"Factory",workers:"1,240",capacity:"220k dozen/year",
+    product:"Knit garments",sources:["DIFE","BGMEA","EPB"],
+    evidence:[
+      ["DIFE","Official site","Registered"],
+      ["BGMEA","Probable site","Factory profile"],
+      ["EPB","Organization","Exporter evidence"]
+    ]
+  },
+  {
+    id:"DEMO-002",name:"Delta Foods Processing Ltd.",sector:"Food & agro",district:"Narayanganj",
+    upazila:"Rupganj",status:"Registered",type:"Factory",workers:"380",capacity:"Source pending",
+    product:"Processed foods",sources:["DIFE","EPB","DoE"],
+    evidence:[
+      ["DIFE","Official site","Registered"],
+      ["EPB","Probable site","Exporter evidence"],
+      ["DoE","Project candidate","Environmental category"]
+    ]
+  },
+  {
+    id:"DEMO-003",name:"Metro Engineering Works",sector:"Engineering & materials",district:"Chattogram",
+    upazila:"Sitakunda",status:"Registered",type:"Industrial establishment",workers:"210",capacity:"Source pending",
+    product:"Fabricated metal products",sources:["DIFE","BEPZA"],
+    evidence:[
+      ["DIFE","Official site","Registered"],
+      ["BEPZA","Organization","Enterprise evidence"]
+    ]
+  },
+  {
+    id:"DEMO-004",name:"Eastern Footwear Industries",sector:"Leather & footwear",district:"Gazipur",
+    upazila:"Kaliakair",status:"Registered",type:"Factory",workers:"860",capacity:"1.8m pairs/year",
+    product:"Leather footwear",sources:["DIFE","EPB"],
+    evidence:[
+      ["DIFE","Official site","Registered"],
+      ["EPB","Probable site","Exporter + product evidence"]
+    ]
+  }
+];
+
+const rows=document.getElementById("rows");
+const detail=document.getElementById("detail");
+const search=document.getElementById("search");
+const sector=document.getElementById("sector");
+const district=document.getElementById("district");
+const resultCount=document.getElementById("resultCount");
+let selected=records[0].id;
+
+function filtered(){
+  const q=search.value.trim().toLowerCase();
+  return records.filter(r=>{
+    const hay=[r.name,r.sector,r.district,r.upazila,r.product,r.sources.join(" ")].join(" ").toLowerCase();
+    return (!q||hay.includes(q)) &&
+      (!sector.value||r.sector===sector.value) &&
+      (!district.value||r.district===district.value);
+  });
+}
+
+function renderDetail(r){
+  if(!r){detail.innerHTML='<div class="empty">Select an establishment to inspect its evidence.</div>';return;}
+  detail.innerHTML=`
+    <div class="eyebrow">${r.id} · synthetic record</div>
+    <h3>${r.name}</h3>
+    <div class="location">${r.upazila}, ${r.district}</div>
+    <span class="badge good">${r.status}</span>
+    <div class="rule"></div>
+    <div class="fact-grid">
+      <div class="fact"><label>Sector</label><strong>${r.sector}</strong></div>
+      <div class="fact"><label>Establishment type</label><strong>${r.type}</strong></div>
+      <div class="fact"><label>Employment</label><strong>${r.workers}</strong></div>
+      <div class="fact"><label>Capacity</label><strong>${r.capacity}</strong></div>
+      <div class="fact"><label>Principal product</label><strong>${r.product}</strong></div>
+      <div class="fact"><label>Evidence sources</label><strong>${r.sources.length}</strong></div>
+    </div>
+    <div class="rule"></div>
+    <div class="eyebrow">Source evidence</div>
+    <div class="evidence">
+      ${r.evidence.map(e=>`
+        <div class="evidence-row">
+          <b>${e[0]}</b><span>${e[1]}</span><span class="badge info">${e[2]}</span>
+        </div>`).join("")}
+    </div>
+    <div class="rule"></div>
+    <div class="small">Production design: every displayed field will carry source, observation date and linkage scope. External evidence never overwrites the DIFE observation.</div>
+  `;
+}
+
+function render(){
+  const data=filtered();
+  resultCount.textContent=`${data.length} demo record${data.length===1?"":"s"}`;
+  if(!data.some(r=>r.id===selected)) selected=data[0]?.id||null;
+  rows.innerHTML=data.map(r=>`
+    <tr class="${r.id===selected?"selected":""}" data-id="${r.id}">
+      <td><div class="company">${r.name}</div><div class="small">${r.id}</div></td>
+      <td>${r.sector}</td>
+      <td>${r.district}</td>
+      <td><div class="source-tags">${r.sources.map(s=>`<span class="tag">${s}</span>`).join("")}</div></td>
+      <td><span class="badge good">${r.status}</span></td>
+    </tr>
+  `).join("");
+  rows.querySelectorAll("tr").forEach(tr=>tr.addEventListener("click",()=>{
+    selected=tr.dataset.id;render();
+  }));
+  renderDetail(data.find(r=>r.id===selected));
+}
+[search,sector,district].forEach(el=>el.addEventListener("input",render));
+render();
+</script>
+</body>
+</html>
