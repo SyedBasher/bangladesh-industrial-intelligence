@@ -71,6 +71,13 @@ from .parsers import extract_public_id, parse_dife_detail, parse_dife_list_page
 from .policy import SourceAccessPolicy
 from .product_view import ProductBaseRecord, build_product_payload
 from .sampling import ValidationCandidate
+from .spatial_exposure import (
+    build_district_exposure_profile,
+    build_establishment_exposure_profile,
+    build_sector_exposure_profile,
+    link_exposure_observations,
+    validate_exposure_observation,
+)
 from .source_index import (
     IndexRequest,
     SourceIndexRecord,
@@ -647,6 +654,47 @@ CREATE TABLE IF NOT EXISTS national_ingest_sources (
 
 CREATE INDEX IF NOT EXISTS national_ingest_mode_idx
     ON national_ingest_sources(ingest_mode, imported_at DESC);
+
+
+CREATE TABLE IF NOT EXISTS spatial_exposure_sources (
+    source_name TEXT PRIMARY KEY,
+    authority TEXT NOT NULL,
+    methodology_note TEXT NOT NULL,
+    source_reference TEXT,
+    imported_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS spatial_exposure_observations (
+    exposure_observation_id INTEGER PRIMARY KEY,
+    source_name TEXT NOT NULL REFERENCES spatial_exposure_sources(source_name),
+    domain TEXT NOT NULL CHECK(domain IN (
+        'CLIMATE_HAZARD','TRANSPORT_ACCESS','POWER_SYSTEM','ENVIRONMENTAL_REGULATORY'
+    )),
+    metric_code TEXT NOT NULL,
+    metric_label TEXT NOT NULL,
+    spatial_scope TEXT NOT NULL CHECK(spatial_scope IN ('SITE','UPAZILA','DISTRICT')),
+    establishment_ref TEXT,
+    district TEXT,
+    upazila TEXT,
+    value_text TEXT,
+    value_numeric REAL,
+    unit TEXT,
+    direction TEXT NOT NULL CHECK(direction IN (
+        'HIGHER_MEANS_MORE_EXPOSURE','HIGHER_MEANS_LESS_EXPOSURE','CONTEXT_ONLY'
+    )),
+    source_vintage TEXT,
+    observed_at TEXT,
+    evidence_note TEXT,
+    observation_sha256 TEXT NOT NULL,
+    UNIQUE(source_name, observation_sha256)
+);
+
+CREATE INDEX IF NOT EXISTS spatial_exposure_source_idx
+    ON spatial_exposure_observations(source_name, domain, metric_code);
+CREATE INDEX IF NOT EXISTS spatial_exposure_district_idx
+    ON spatial_exposure_observations(district, upazila, spatial_scope);
+CREATE INDEX IF NOT EXISTS spatial_exposure_site_idx
+    ON spatial_exposure_observations(establishment_ref, spatial_scope);
 
 CREATE TABLE IF NOT EXISTS national_snapshot_collection_runs (
     collection_run_id INTEGER PRIMARY KEY,
@@ -4056,6 +4104,229 @@ class LocalValidationStore:
             generated_at=generated_at,
         )
         return filter_registry_for_profile(registry, profile)
+
+
+    def record_spatial_exposure_source(
+        self,
+        source_name: str,
+        *,
+        authority: str,
+        methodology_note: str,
+        imported_at: str,
+        source_reference: str | None = None,
+    ) -> None:
+        if not source_name.strip():
+            raise ValueError("source_name is required")
+        if not authority.strip():
+            raise ValueError("authority is required")
+        if not methodology_note.strip():
+            raise ValueError("methodology_note is required")
+        with self.conn:
+            self.conn.execute(
+                """INSERT INTO spatial_exposure_sources(
+                       source_name, authority, methodology_note,
+                       source_reference, imported_at
+                   ) VALUES(?,?,?,?,?)
+                   ON CONFLICT(source_name) DO UPDATE SET
+                     authority=excluded.authority,
+                     methodology_note=excluded.methodology_note,
+                     source_reference=excluded.source_reference,
+                     imported_at=excluded.imported_at""",
+                (
+                    source_name.strip(),
+                    authority.strip(),
+                    methodology_note.strip(),
+                    source_reference,
+                    imported_at,
+                ),
+            )
+
+    def ingest_spatial_exposure_observations(
+        self,
+        source_name: str,
+        observations: list[Mapping[str, object]],
+    ) -> int:
+        source = self.conn.execute(
+            """SELECT source_name FROM spatial_exposure_sources
+               WHERE source_name=?""",
+            (source_name,),
+        ).fetchone()
+        if source is None:
+            raise KeyError(f"spatial exposure source not registered: {source_name}")
+
+        inserted = 0
+        with self.conn:
+            for raw in observations:
+                candidate = dict(raw)
+                candidate["source"] = source_name
+                obs = validate_exposure_observation(candidate)
+                canonical = {
+                    "source": obs.source,
+                    "domain": obs.domain.value,
+                    "metric_code": obs.metric_code,
+                    "metric_label": obs.metric_label,
+                    "spatial_scope": obs.spatial_scope.value,
+                    "establishment_ref": obs.establishment_ref,
+                    "district": obs.district,
+                    "upazila": obs.upazila,
+                    "value_text": obs.value_text,
+                    "value_numeric": obs.value_numeric,
+                    "unit": obs.unit,
+                    "direction": obs.direction.value,
+                    "source_vintage": obs.source_vintage,
+                    "observed_at": obs.observed_at,
+                    "evidence_note": obs.evidence_note,
+                }
+                observation_sha256 = sha256_text(
+                    json.dumps(
+                        canonical,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                )
+                cursor = self.conn.execute(
+                    """INSERT OR IGNORE INTO spatial_exposure_observations(
+                           source_name, domain, metric_code, metric_label,
+                           spatial_scope, establishment_ref, district, upazila,
+                           value_text, value_numeric, unit, direction,
+                           source_vintage, observed_at, evidence_note,
+                           observation_sha256
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        obs.source,
+                        obs.domain.value,
+                        obs.metric_code,
+                        obs.metric_label,
+                        obs.spatial_scope.value,
+                        obs.establishment_ref,
+                        obs.district,
+                        obs.upazila,
+                        obs.value_text,
+                        obs.value_numeric,
+                        obs.unit,
+                        obs.direction.value,
+                        obs.source_vintage,
+                        obs.observed_at,
+                        obs.evidence_note,
+                        observation_sha256,
+                    ),
+                )
+                inserted += int(cursor.rowcount > 0)
+        return inserted
+
+    def spatial_exposure_product_observations(
+        self,
+    ) -> list[dict[str, object]]:
+        rows = self.conn.execute(
+            """SELECT source_name AS source, domain, metric_code, metric_label,
+                      spatial_scope, establishment_ref, district, upazila,
+                      value_text, value_numeric, unit, direction,
+                      source_vintage, observed_at, evidence_note
+               FROM spatial_exposure_observations
+               ORDER BY source_name, domain, metric_code, spatial_scope,
+                        district, upazila, establishment_ref""",
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def national_exposure_links(
+        self,
+        universe_label: str,
+        *,
+        generated_at: str,
+    ) -> list[dict[str, object]]:
+        registry = self.national_registry_product_rows(
+            universe_label,
+            generated_at=generated_at,
+        )
+        observations = self.spatial_exposure_product_observations()
+        return link_exposure_observations(registry, observations)
+
+    def national_establishment_exposure_profile(
+        self,
+        universe_label: str,
+        establishment_ref: str,
+        *,
+        generated_at: str,
+    ) -> dict[str, object]:
+        registry = self.national_registry_product_rows(
+            universe_label,
+            generated_at=generated_at,
+        )
+        row = next(
+            (
+                item for item in registry
+                if str(item.get("establishment_ref") or "") == establishment_ref
+            ),
+            None,
+        )
+        if row is None:
+            raise KeyError(
+                f"establishment {establishment_ref!r} not found in {universe_label}"
+            )
+        links = link_exposure_observations(
+            registry,
+            self.spatial_exposure_product_observations(),
+        )
+        return build_establishment_exposure_profile(
+            row,
+            links,
+            generated_at=generated_at,
+        )
+
+    def national_district_exposure_profile(
+        self,
+        universe_label: str,
+        district: str,
+        *,
+        generated_at: str,
+    ) -> dict[str, object]:
+        district_profile = self.national_district_profile(
+            universe_label,
+            district,
+            generated_at=generated_at,
+        )
+        registry = self.national_registry_product_rows(
+            universe_label,
+            generated_at=generated_at,
+        )
+        links = link_exposure_observations(
+            registry,
+            self.spatial_exposure_product_observations(),
+        )
+        return build_district_exposure_profile(
+            district_profile,
+            registry,
+            links,
+            generated_at=generated_at,
+        )
+
+    def national_sector_exposure_profile(
+        self,
+        universe_label: str,
+        sector_family: str,
+        *,
+        generated_at: str,
+    ) -> dict[str, object]:
+        sector_profile = self.national_sector_profile(
+            universe_label,
+            sector_family,
+            generated_at=generated_at,
+        )
+        registry = self.national_registry_product_rows(
+            universe_label,
+            generated_at=generated_at,
+        )
+        links = link_exposure_observations(
+            registry,
+            self.spatial_exposure_product_observations(),
+        )
+        return build_sector_exposure_profile(
+            sector_profile,
+            registry,
+            links,
+            generated_at=generated_at,
+        )
 
     def national_cluster_context(
         self,
