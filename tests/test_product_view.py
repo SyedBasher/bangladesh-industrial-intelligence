@@ -110,7 +110,7 @@ def test_calculated_indicators_are_explicitly_calculated():
     assert calculated["employment_consistency"]["comparisons"][0]["absolute_difference_pct"] == 8.0
     assert calculated["evidence_freshness"]["origin"] == "CALCULATED"
     assert calculated["export_product_breadth"]["hs_code_count"] == 1
-    assert calculated["external_numeric_consistency"]["EMPLOYMENT_COUNT"]["value"] if False else True
+    assert calculated["external_numeric_consistency"]["EMPLOYMENT_COUNT"]["band"] == "NOT_CHECKED"
     assert calculated["cluster_context"]["status"] == "NOT_AVAILABLE"
 
 
