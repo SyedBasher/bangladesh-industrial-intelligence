@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.21.0-dev — 2026-09-23
+
+- Added bounded, restartable national DIFE snapshot collection batches.
+- Added pre-membership source-total, page-cardinality and duplicate-ID integrity checks.
+- Added page-attempt audit records with raw private payload provenance.
+- Added explicit failed-page requeue for recoverable collection/parser failures.
+- Added hard universe abort plus fresh-run lineage for structural integrity failures.
+- Added automatic finalization only when no planned or failed pages remain.
+- Added PostgreSQL migration parity and execution/recovery methodology.
+- No real national DIFE crawl has been executed.
+
 ## v0.20.0-dev — 2026-09-23
 
 - Added a separately audited national DIFE snapshot universe, distinct from the stratified validation sample.
