@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mangrove-intelligence.example/schemas/national_registry_row_v1.schema.json",
+  "title": "Bangladesh Industrial Intelligence National Registry Row v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "universe_label",
+    "establishment_ref",
+    "name",
+    "location",
+    "upazila",
+    "district",
+    "division",
+    "source_sector_label",
+    "sector_family",
+    "official_status",
+    "licence_class",
+    "observed_at",
+    "source"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "universe_label": {
+      "type": "string"
+    },
+    "establishment_ref": {
+      "type": "string",
+      "pattern": "^DIFE:[0-9]+$"
+    },
+    "name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "location": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "upazila": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "district": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "division": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_sector_label": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "sector_family": {
+      "type": "string"
+    },
+    "official_status": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "licence_class": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "observed_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source": {
+      "const": "DIFE"
+    }
+  }
+}
