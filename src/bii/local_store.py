@@ -6,6 +6,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Mapping
 
+from .analytical_intelligence import UniverseKind, cluster_context
 from .candidate_resolution import (
     CandidateBlockIndex,
     CandidateRecord,
@@ -2158,6 +2159,97 @@ class LocalValidationStore:
             observed_at=row["product_observed_at"],
         )
 
+    def intelligence_history_for_establishment(
+        self,
+        validation_label: str,
+        dife_public_id: int,
+    ) -> list[dict[str, object]]:
+        """Return all linked typed observations retained for analytical history."""
+        rows = self.conn.execute(
+            """SELECT
+                   el.source_name,
+                   el.match_type,
+                   el.site_level_match,
+                   t.observation_type,
+                   t.scope AS source_scope,
+                   li.display_scope,
+                   li.site_attributable,
+                   t.value_text,
+                   t.value_numeric,
+                   t.unit,
+                   t.source_updated_at_raw,
+                   t.observed_at,
+                   el.created_at AS linked_at
+               FROM entity_links el
+               JOIN linked_intelligence_observations li
+                 ON li.entity_link_id=el.entity_link_id
+               JOIN external_typed_observations t
+                 ON t.typed_observation_id=li.typed_observation_id
+               WHERE el.validation_label=? AND el.dife_public_id=?
+               ORDER BY t.observed_at, el.source_name, t.observation_type,
+                        li.linked_intelligence_id""",
+            (validation_label, dife_public_id),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def validation_sample_cluster_context(
+        self,
+        validation_label: str,
+        dife_public_id: int,
+    ) -> dict[str, object]:
+        """Descriptive sample context only; never a national-cluster claim."""
+        target = self.conn.execute(
+            """WITH latest_list AS (
+                   SELECT eo.*,
+                          ROW_NUMBER() OVER(
+                              PARTITION BY eo.dife_public_id
+                              ORDER BY eo.observed_at DESC, eo.observation_id DESC
+                          ) AS rn
+                   FROM establishment_observations eo
+               )
+               SELECT v.sector_family, ll.district
+               FROM validation_sample v
+               LEFT JOIN latest_list ll
+                 ON ll.dife_public_id=v.dife_public_id AND ll.rn=1
+               WHERE v.validation_label=? AND v.dife_public_id=?""",
+            (validation_label, dife_public_id),
+        ).fetchone()
+        if target is None:
+            raise KeyError(
+                f"validation establishment not found: {validation_label} {dife_public_id}"
+            )
+
+        rows = self.conn.execute(
+            """WITH latest_list AS (
+                   SELECT eo.*,
+                          ROW_NUMBER() OVER(
+                              PARTITION BY eo.dife_public_id
+                              ORDER BY eo.observed_at DESC, eo.observation_id DESC
+                          ) AS rn
+                   FROM establishment_observations eo
+               )
+               SELECT v.sector_family, ll.district
+               FROM validation_sample v
+               LEFT JOIN latest_list ll
+                 ON ll.dife_public_id=v.dife_public_id AND ll.rn=1
+               WHERE v.validation_label=?""",
+            (validation_label,),
+        ).fetchall()
+        universe = [
+            {
+                "sector_family": str(row["sector_family"]),
+                "district": row["district"],
+            }
+            for row in rows
+        ]
+        return cluster_context(
+            universe,
+            district=target["district"],
+            sector_family=str(target["sector_family"]),
+            universe_label=validation_label,
+            universe_kind=UniverseKind.VALIDATION_SAMPLE,
+        )
+
     def product_establishment_payload(
         self,
         validation_label: str,
@@ -2171,10 +2263,20 @@ class LocalValidationStore:
             validation_label,
             dife_public_id,
         )
+        history = self.intelligence_history_for_establishment(
+            validation_label,
+            dife_public_id,
+        )
+        sample_cluster = self.validation_sample_cluster_context(
+            validation_label,
+            dife_public_id,
+        )
         return build_product_payload(
             base,
             observations,
             generated_at=generated_at,
+            history=history,
+            cluster_context=sample_cluster,
         )
 
     def product_validation_feed(
