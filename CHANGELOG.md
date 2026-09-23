@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.18.0-dev — 2026-09-23
+
+- Added a strict versioned product payload between the private database and frontend/API consumers.
+- Added approved-field allowlisting and fail-closed protection against raw paths, source URLs, internal IDs, hashes and parser internals.
+- Added calculated employment scale, export-evidence breadth and employment-consistency diagnostics, all explicitly labeled CALCULATED.
+- Added one-establishment and whole-validation-feed product interfaces.
+- Added safe JSON and JSONL feed writers.
+- Added a formal JSON Schema for product establishment payload v1.0.
+
 ## v0.17.0-dev — 2026-09-23
 
 - Added typed BGMEA/EPB observations for employment, machines, capacity, products, HS codes, markets, certifications and registrations.

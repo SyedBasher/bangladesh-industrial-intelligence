@@ -1,0 +1,376 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mangrove-intelligence.example/schemas/product_establishment_v1.schema.json",
+  "title": "Bangladesh Industrial Intelligence Product Establishment v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "establishment",
+    "facts",
+    "calculated",
+    "evidence"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "establishment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "establishment_ref",
+        "name",
+        "address",
+        "upazila",
+        "district",
+        "division",
+        "official_status",
+        "industrial_sector",
+        "establishment_type",
+        "licence_class",
+        "licence_expiry",
+        "dife_worker_total",
+        "dife_observed_at",
+        "source"
+      ],
+      "properties": {
+        "establishment_ref": {
+          "type": "string",
+          "pattern": "^DIFE:[0-9]+$"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "address": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "upazila": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "district": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "division": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "official_status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "industrial_sector": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "establishment_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "licence_class": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "licence_expiry": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dife_worker_total": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "dife_observed_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "const": "DIFE"
+        }
+      }
+    },
+    "facts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "external_employment",
+        "machines",
+        "production_capacity",
+        "products",
+        "hs_codes",
+        "export_markets",
+        "certifications",
+        "association_membership",
+        "association_registration",
+        "export_registration",
+        "exporter_database_evidence",
+        "associations",
+        "exporter_category"
+      ],
+      "properties": {
+        "external_employment": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fact"
+          }
+        },
+        "machines": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fact"
+          }
+        },
+        "production_capacity": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fact"
+          }
+        },
+        "products": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fact"
+          }
+        },
+        "hs_codes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fact"
+          }
+        },
+        "export_markets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fact"
+          }
+        },
+        "certifications": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fact"
+          }
+        },
+        "association_membership": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fact"
+          }
+        },
+        "association_registration": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fact"
+          }
+        },
+        "export_registration": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fact"
+          }
+        },
+        "exporter_database_evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fact"
+          }
+        },
+        "associations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fact"
+          }
+        },
+        "exporter_category": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fact"
+          }
+        }
+      }
+    },
+    "calculated": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "employment_scale_band",
+        "export_evidence_breadth",
+        "employment_consistency"
+      ],
+      "properties": {
+        "employment_scale_band": {
+          "type": "object"
+        },
+        "export_evidence_breadth": {
+          "type": "object"
+        },
+        "employment_consistency": {
+          "type": "object"
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "source",
+          "scope",
+          "match_type",
+          "site_attributable",
+          "value",
+          "numeric_value",
+          "unit",
+          "source_vintage",
+          "observed_at"
+        ],
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "scope": {
+            "enum": [
+              "SITE",
+              "ORGANIZATION"
+            ]
+          },
+          "match_type": {
+            "type": "string"
+          },
+          "site_attributable": {
+            "type": "boolean"
+          },
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "numeric_value": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_vintage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "observed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "scope",
+        "match_type",
+        "site_attributable",
+        "value",
+        "numeric_value",
+        "unit",
+        "source_vintage",
+        "observed_at"
+      ],
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "scope": {
+          "enum": [
+            "SITE",
+            "ORGANIZATION"
+          ]
+        },
+        "match_type": {
+          "type": "string"
+        },
+        "site_attributable": {
+          "type": "boolean"
+        },
+        "value": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "numeric_value": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_vintage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "observed_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}

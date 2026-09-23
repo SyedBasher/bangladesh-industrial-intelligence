@@ -47,6 +47,7 @@ from .intelligence_observations import (
 )
 from .parsers import extract_public_id, parse_dife_detail, parse_dife_list_page
 from .policy import SourceAccessPolicy
+from .product_view import ProductBaseRecord, build_product_payload
 from .sampling import ValidationCandidate
 from .source_index import (
     IndexRequest,
@@ -2090,6 +2091,116 @@ class LocalValidationStore:
             "sector_family": dife.sector_family,
             "intelligence": grouped,
         }
+
+    def _product_base_record(
+        self,
+        validation_label: str,
+        dife_public_id: int,
+    ) -> ProductBaseRecord:
+        row = self.conn.execute(
+            """WITH latest_list AS (
+                   SELECT eo.*,
+                          ROW_NUMBER() OVER(
+                              PARTITION BY eo.dife_public_id
+                              ORDER BY eo.observed_at DESC, eo.observation_id DESC
+                          ) AS rn
+                   FROM establishment_observations eo
+               ),
+               latest_detail AS (
+                   SELECT d.*,
+                          ROW_NUMBER() OVER(
+                              PARTITION BY d.validation_label, d.dife_public_id
+                              ORDER BY d.observed_at DESC, d.detail_observation_id DESC
+                          ) AS rn
+                   FROM detail_observations d
+                   WHERE d.validation_label=?
+               )
+               SELECT
+                   v.dife_public_id,
+                   COALESCE(ld.name_en, ld.name_bn, ll.name, e.canonical_name) AS product_name,
+                   ld.address AS product_address,
+                   COALESCE(ld.upazila, ll.upazila) AS product_upazila,
+                   COALESCE(ld.district, ll.district) AS product_district,
+                   COALESCE(ld.division, ll.division) AS product_division,
+                   COALESCE(ld.status, ll.status) AS product_status,
+                   COALESCE(ld.sector, ll.sector) AS product_sector,
+                   ld.establishment_type,
+                   COALESCE(ld.licence_class, ll.licence_class) AS product_class,
+                   ld.licence_expiry_raw,
+                   ld.worker_total,
+                   COALESCE(ld.observed_at, ll.observed_at) AS product_observed_at
+               FROM validation_sample v
+               JOIN establishments e ON e.dife_public_id=v.dife_public_id
+               LEFT JOIN latest_list ll
+                 ON ll.dife_public_id=v.dife_public_id AND ll.rn=1
+               LEFT JOIN latest_detail ld
+                 ON ld.dife_public_id=v.dife_public_id AND ld.rn=1
+               WHERE v.validation_label=? AND v.dife_public_id=?""",
+            (validation_label, validation_label, dife_public_id),
+        ).fetchone()
+        if row is None:
+            raise KeyError(
+                f"validation establishment not found: {validation_label} {dife_public_id}"
+            )
+        return ProductBaseRecord(
+            public_id=int(row["dife_public_id"]),
+            name=row["product_name"],
+            address=row["product_address"],
+            upazila=row["product_upazila"],
+            district=row["product_district"],
+            division=row["product_division"],
+            official_status=row["product_status"],
+            industrial_sector=row["product_sector"],
+            establishment_type=row["establishment_type"],
+            licence_class=row["product_class"],
+            licence_expiry_raw=row["licence_expiry_raw"],
+            worker_total=row["worker_total"],
+            observed_at=row["product_observed_at"],
+        )
+
+    def product_establishment_payload(
+        self,
+        validation_label: str,
+        dife_public_id: int,
+        *,
+        generated_at: str,
+    ) -> dict[str, object]:
+        """Build the safe v1 product representation for one establishment."""
+        base = self._product_base_record(validation_label, dife_public_id)
+        observations = self.intelligence_for_establishment(
+            validation_label,
+            dife_public_id,
+        )
+        return build_product_payload(
+            base,
+            observations,
+            generated_at=generated_at,
+        )
+
+    def product_validation_feed(
+        self,
+        validation_label: str,
+        *,
+        generated_at: str,
+    ) -> list[dict[str, object]]:
+        """Build a safe product feed without exposing internal database identifiers."""
+        rows = self.conn.execute(
+            """SELECT dife_public_id
+               FROM validation_sample
+               WHERE validation_label=?
+               ORDER BY dife_public_id""",
+            (validation_label,),
+        ).fetchall()
+        if not rows:
+            raise ValueError(f"validation sample not found: {validation_label!r}")
+        return [
+            self.product_establishment_payload(
+                validation_label,
+                int(row["dife_public_id"]),
+                generated_at=generated_at,
+            )
+            for row in rows
+        ]
 
     def review_external_link(
         self,
