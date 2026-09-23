@@ -177,9 +177,12 @@ def build_district_profile(
             "share_national_pct": district_summary.get("share_national_pct"),
         },
         "coverage": {
+            "national_registry_coverage": "EXACT",
+            "records_in_profile": len(district_rows),
             "mapped_sector_records": mapped,
             "unclassified_sector_records": unclassified,
             "sector_mapping_coverage_pct": _share(mapped, len(district_rows)),
+            "external_enrichment_coverage": "NOT_INCLUDED_IN_LIST_LEVEL_PROFILE",
         },
         "composition": {
             "upazilas": _upazila_composition(district_rows),
@@ -286,6 +289,15 @@ def build_sector_profile(
             "establishments": int(sector_summary["establishments"]),
             "share_national_pct": sector_summary.get("share_national_pct"),
             "district_count": int(sector_summary.get("district_count") or 0),
+        },
+        "coverage": {
+            "national_registry_coverage": "EXACT",
+            "records_in_profile": len(sector_rows),
+            "source_sector_label_count": len({
+                str(row.get("source_sector_label") or "UNKNOWN")
+                for row in sector_rows
+            }),
+            "external_enrichment_coverage": "NOT_INCLUDED_IN_LIST_LEVEL_PROFILE",
         },
         "composition": {
             "districts": districts,
