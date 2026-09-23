@@ -8,6 +8,10 @@ from pathlib import Path
 from typing import Mapping
 
 from .analytical_intelligence import UniverseKind, cluster_context
+from .national_product import (
+    build_national_dashboard_payload,
+    build_national_registry_rows,
+)
 from .national_universe import (
     NationalDuplicatePublicIdError,
     NationalPageCardinalityError,
@@ -3906,6 +3910,8 @@ class LocalValidationStore:
             """SELECT
                    m.dife_public_id,
                    o.name,
+                   o.location,
+                   o.upazila,
                    o.sector AS sector_label,
                    o.district,
                    o.division,
@@ -3925,6 +3931,8 @@ class LocalValidationStore:
             result.append({
                 "dife_public_id": int(row["dife_public_id"]),
                 "name": row["name"],
+                "location": row["location"],
+                "upazila": row["upazila"],
                 "sector_label": source_sector,
                 "sector_family": explicit_sector_family(source_sector) or "UNCLASSIFIED",
                 "district": row["district"],
@@ -3941,6 +3949,51 @@ class LocalValidationStore:
     ) -> dict[str, object]:
         records = self.national_universe_records(universe_label, require_eligible=True)
         return build_national_rollups(records, universe_label=universe_label)
+
+    def national_dashboard_payload(
+        self,
+        universe_label: str,
+        *,
+        generated_at: str,
+    ) -> dict[str, object]:
+        run = self.conn.execute(
+            """SELECT universe_id, universe_label, completed_at, expected_total,
+                      unique_public_ids, eligible_for_national_analysis
+               FROM national_universe_runs
+               WHERE universe_label=?""",
+            (universe_label,),
+        ).fetchone()
+        if run is None:
+            raise KeyError(f"national universe not found: {universe_label}")
+        if not bool(run["eligible_for_national_analysis"]):
+            raise ValueError("national universe is not eligible for national analysis")
+        provenance = self.national_ingest_source(int(run["universe_id"]))
+        rollups = self.national_universe_rollups(universe_label)
+        return build_national_dashboard_payload(
+            rollups,
+            universe_label=universe_label,
+            generated_at=generated_at,
+            completed_at=run["completed_at"],
+            expected_total=int(run["expected_total"]),
+            unique_public_ids=int(run["unique_public_ids"]),
+            ingest_mode=str(provenance["ingest_mode"]),
+        )
+
+    def national_registry_product_rows(
+        self,
+        universe_label: str,
+        *,
+        generated_at: str,
+    ) -> list[dict[str, object]]:
+        records = self.national_universe_records(
+            universe_label,
+            require_eligible=True,
+        )
+        return build_national_registry_rows(
+            records,
+            universe_label=universe_label,
+            generated_at=generated_at,
+        )
 
     def national_cluster_context(
         self,
