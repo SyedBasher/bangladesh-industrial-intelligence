@@ -7,6 +7,7 @@ from bii.spatial_exposure import (
     exposure_link_coverage,
     link_exposure_observations,
     validate_exposure_observation,
+    write_exposure_profile_json,
 )
 
 
@@ -196,3 +197,26 @@ def test_sector_profile_does_not_infer_supply_chain_propagation():
     assert profile["coverage"]["coverage_pct"] == 100.0
     assert profile["method"]["no_supply_chain_inference"] is True
     assert profile["method"]["no_composite_score"] is True
+
+
+def test_exposure_profile_json_writer_is_safe(tmp_path):
+    links = link_exposure_observations(_registry(), _observations())
+    profile = build_establishment_exposure_profile(
+        _registry()[1],
+        links,
+        generated_at="2026-09-24T06:00:00+06:00",
+    )
+    path = write_exposure_profile_json(
+        profile,
+        tmp_path / "DIFE-102-exposure.json",
+    )
+    serialized = path.read_text(encoding="utf-8")
+    assert "DIFE:102" in serialized
+    for forbidden in (
+        "source_url",
+        "snapshot_id",
+        "universe_id",
+        "artifact_path",
+        "source_reference",
+    ):
+        assert forbidden not in serialized
