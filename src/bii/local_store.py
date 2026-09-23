@@ -4561,9 +4561,9 @@ class LocalValidationStore:
             universe_label,
             generated_at=generated_at,
         )
-        links = link_exposure_observations(
-            registry,
-            self.spatial_exposure_product_observations(),
+        links = self.national_exposure_links(
+            universe_label,
+            generated_at=generated_at,
         )
         return build_district_exposure_profile(
             district_profile,
@@ -4588,9 +4588,9 @@ class LocalValidationStore:
             universe_label,
             generated_at=generated_at,
         )
-        links = link_exposure_observations(
-            registry,
-            self.spatial_exposure_product_observations(),
+        links = self.national_exposure_links(
+            universe_label,
+            generated_at=generated_at,
         )
         return build_sector_exposure_profile(
             sector_profile,
