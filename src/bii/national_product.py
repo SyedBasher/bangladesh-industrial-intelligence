@@ -47,6 +47,10 @@ def _assert_safe(value: object, path: str = "$") -> None:
         )
 
 
+def assert_national_product_safe(value: object) -> None:
+    _assert_safe(value)
+
+
 def build_national_dashboard_payload(
     rollups: Mapping[str, object],
     *,
