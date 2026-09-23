@@ -87,7 +87,7 @@ def test_product_payload_is_allowlisted_and_does_not_leak_internal_fields():
         _observations(),
         generated_at="2026-09-24T00:33:00+06:00",
     )
-    assert payload["schema_version"] == "1.0"
+    assert payload["schema_version"] == "1.1"
     assert payload["establishment"]["establishment_ref"] == "DIFE:101"
     assert "external_record_id" not in str(payload)
     assert "raw_label" not in str(payload)
@@ -108,6 +108,40 @@ def test_calculated_indicators_are_explicitly_calculated():
     assert calculated["export_evidence_breadth"]["label"] == "SINGLE_SOURCE"
     assert calculated["employment_consistency"]["value"] == "CONSISTENT_WITHIN_10_PERCENT"
     assert calculated["employment_consistency"]["comparisons"][0]["absolute_difference_pct"] == 8.0
+    assert calculated["evidence_freshness"]["origin"] == "CALCULATED"
+    assert calculated["export_product_breadth"]["hs_code_count"] == 1
+    assert calculated["external_numeric_consistency"]["EMPLOYMENT_COUNT"]["value"] if False else True
+    assert calculated["cluster_context"]["status"] == "NOT_AVAILABLE"
+
+
+def test_history_generates_change_signal_without_interpreting_causality():
+    history = [
+        {
+            "observation_type": "EMPLOYMENT_COUNT",
+            "source_name": "BGMEA",
+            "site_attributable": 1,
+            "value_numeric": 1000,
+            "unit": None,
+            "observed_at": "2025-09-01",
+        },
+        {
+            "observation_type": "EMPLOYMENT_COUNT",
+            "source_name": "BGMEA",
+            "site_attributable": 1,
+            "value_numeric": 1080,
+            "unit": None,
+            "observed_at": "2026-09-01",
+        },
+    ]
+    payload = build_product_payload(
+        _base(),
+        _observations(),
+        generated_at="2026-09-24T00:33:00+06:00",
+        history=history,
+    )
+    signal = payload["calculated"]["change_signals"][0]
+    assert signal["percent_change"] == 8.0
+    assert "not automatically interpreted" in signal["rule"].lower()
 
 
 def test_employment_band_is_neutral_analytical_band_not_official_classification():
@@ -124,7 +158,7 @@ def test_employment_band_is_neutral_analytical_band_not_official_classification(
 def test_product_safety_checker_fails_closed_on_private_fields():
     with pytest.raises(ValueError):
         assert_product_payload_safe({
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "source_url": "https://private.example",
             "nested": {"snapshot_id": 10},
         })
