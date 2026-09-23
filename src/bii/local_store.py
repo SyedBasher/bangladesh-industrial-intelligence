@@ -7,6 +7,13 @@ from pathlib import Path
 from typing import Mapping
 
 from .analytical_intelligence import UniverseKind, cluster_context
+from .national_universe import (
+    NationalPageStatus,
+    assess_national_universe_quality,
+    build_national_rollups,
+    explicit_sector_family,
+    plan_national_pages,
+)
 from .candidate_resolution import (
     CandidateBlockIndex,
     CandidateRecord,
@@ -566,6 +573,57 @@ CREATE INDEX IF NOT EXISTS enrichment_target_status_idx
     ON enrichment_targets(validation_label, source_name, status);
 CREATE INDEX IF NOT EXISTS entity_link_dife_source_idx
     ON entity_links(validation_label, dife_public_id, source_name, created_at DESC);
+
+
+CREATE TABLE IF NOT EXISTS national_universe_runs (
+    universe_id INTEGER PRIMARY KEY,
+    universe_label TEXT NOT NULL UNIQUE,
+    seed_url TEXT NOT NULL,
+    page_size INTEGER NOT NULL,
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    status TEXT NOT NULL CHECK(status IN ('RUNNING','COMPLETED','FAILED')),
+    expected_total INTEGER,
+    pages_planned INTEGER NOT NULL DEFAULT 1,
+    pages_staged INTEGER NOT NULL DEFAULT 0,
+    unique_public_ids INTEGER NOT NULL DEFAULT 0,
+    duplicate_public_ids INTEGER NOT NULL DEFAULT 0,
+    eligible_for_national_analysis INTEGER NOT NULL DEFAULT 0,
+    qc_json TEXT,
+    notes TEXT
+);
+
+CREATE TABLE IF NOT EXISTS national_universe_pages (
+    universe_id INTEGER NOT NULL REFERENCES national_universe_runs(universe_id),
+    page INTEGER NOT NULL,
+    source_url TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PLANNED'
+      CHECK(status IN ('PLANNED','STAGED','FAILED','SKIPPED')),
+    planned_at TEXT NOT NULL,
+    staged_at TEXT,
+    snapshot_id INTEGER REFERENCES source_snapshots(snapshot_id),
+    records_parsed INTEGER,
+    source_reported_total INTEGER,
+    error_message TEXT,
+    PRIMARY KEY(universe_id, page),
+    UNIQUE(universe_id, source_url)
+);
+
+CREATE TABLE IF NOT EXISTS national_universe_page_members (
+    universe_id INTEGER NOT NULL REFERENCES national_universe_runs(universe_id),
+    page INTEGER NOT NULL,
+    dife_public_id INTEGER NOT NULL REFERENCES establishments(dife_public_id),
+    observation_id INTEGER NOT NULL REFERENCES establishment_observations(observation_id),
+    snapshot_id INTEGER NOT NULL REFERENCES source_snapshots(snapshot_id),
+    PRIMARY KEY(universe_id, page, dife_public_id)
+);
+
+CREATE INDEX IF NOT EXISTS national_universe_status_idx
+    ON national_universe_runs(status, eligible_for_national_analysis);
+CREATE INDEX IF NOT EXISTS national_universe_page_status_idx
+    ON national_universe_pages(universe_id, status, page);
+CREATE INDEX IF NOT EXISTS national_universe_member_idx
+    ON national_universe_page_members(universe_id, dife_public_id);
 
 CREATE INDEX IF NOT EXISTS validation_report_checkpoint_idx
     ON validation_reports(validation_label, checkpoint_n, generated_at DESC);
@@ -2256,6 +2314,7 @@ class LocalValidationStore:
         dife_public_id: int,
         *,
         generated_at: str,
+        national_universe_label: str | None = None,
     ) -> dict[str, object]:
         """Build the safe v1 product representation for one establishment."""
         base = self._product_base_record(validation_label, dife_public_id)
@@ -2267,16 +2326,23 @@ class LocalValidationStore:
             validation_label,
             dife_public_id,
         )
-        sample_cluster = self.validation_sample_cluster_context(
-            validation_label,
-            dife_public_id,
+        cluster = (
+            self.national_cluster_context(
+                national_universe_label,
+                dife_public_id,
+            )
+            if national_universe_label is not None
+            else self.validation_sample_cluster_context(
+                validation_label,
+                dife_public_id,
+            )
         )
         return build_product_payload(
             base,
             observations,
             generated_at=generated_at,
             history=history,
-            cluster_context=sample_cluster,
+            cluster_context=cluster,
         )
 
     def product_validation_feed(
@@ -2284,6 +2350,7 @@ class LocalValidationStore:
         validation_label: str,
         *,
         generated_at: str,
+        national_universe_label: str | None = None,
     ) -> list[dict[str, object]]:
         """Build a safe product feed without exposing internal database identifiers."""
         rows = self.conn.execute(
@@ -2300,6 +2367,7 @@ class LocalValidationStore:
                 validation_label,
                 int(row["dife_public_id"]),
                 generated_at=generated_at,
+                national_universe_label=national_universe_label,
             )
             for row in rows
         ]
@@ -3371,6 +3439,396 @@ class LocalValidationStore:
             (validation_label, source_name.upper()),
         ).fetchall()
         return {str(row["status"]): int(row["n"]) for row in rows}
+
+
+    def create_national_universe_run(
+        self,
+        universe_label: str,
+        *,
+        seed_url: str,
+        started_at: str,
+        page_size: int = 30,
+        notes: str | None = None,
+    ) -> int:
+        if page_size <= 0:
+            raise ValueError("page_size must be positive")
+        with self.conn:
+            cursor = self.conn.execute(
+                """INSERT INTO national_universe_runs(
+                       universe_label, seed_url, page_size, started_at, status,
+                       pages_planned, notes
+                   ) VALUES(?,?,?,?,?,?,?)""",
+                (universe_label, seed_url, page_size, started_at, "RUNNING", 1, notes),
+            )
+            universe_id = int(cursor.lastrowid)
+            self.conn.execute(
+                """INSERT INTO national_universe_pages(
+                       universe_id, page, source_url, status, planned_at
+                   ) VALUES(?,?,?,?,?)""",
+                (universe_id, 1, seed_url, "PLANNED", started_at),
+            )
+        return universe_id
+
+    def national_universe_requests(
+        self,
+        universe_id: int,
+        *,
+        status: str = "PLANNED",
+    ) -> list[dict[str, object]]:
+        rows = self.conn.execute(
+            """SELECT page, source_url, status, planned_at, staged_at,
+                      records_parsed, source_reported_total, error_message
+               FROM national_universe_pages
+               WHERE universe_id=? AND status=?
+               ORDER BY page""",
+            (universe_id, status),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def ingest_national_universe_page(
+        self,
+        universe_id: int,
+        html: str,
+        *,
+        source_url: str,
+        retrieved_at: str,
+        raw_payload_path: str | None = None,
+        parser_version: str = "2.0",
+    ) -> dict[str, object]:
+        run = self.conn.execute(
+            """SELECT status, expected_total FROM national_universe_runs
+               WHERE universe_id=?""",
+            (universe_id,),
+        ).fetchone()
+        if run is None:
+            raise KeyError(f"national universe not found: {universe_id}")
+        if run["status"] != "RUNNING":
+            raise ValueError("national universe run is not RUNNING")
+
+        page_row = self.conn.execute(
+            """SELECT page, status FROM national_universe_pages
+               WHERE universe_id=? AND source_url=?""",
+            (universe_id, source_url),
+        ).fetchone()
+        if page_row is None or page_row["status"] != "PLANNED":
+            raise ValueError("national page was not pre-planned or is already resolved")
+
+        metadata, records = parse_dife_list_page(html)
+        staged = self.ingest_dife_list_html(
+            html,
+            source_url=source_url,
+            retrieved_at=retrieved_at,
+            raw_payload_path=raw_payload_path,
+            parser_version=parser_version,
+        )
+        snapshot_id = int(staged["snapshot_id"])
+        page = int(page_row["page"])
+
+        with self.conn:
+            self.conn.execute(
+                """UPDATE national_universe_pages
+                   SET status='STAGED', staged_at=?, snapshot_id=?,
+                       records_parsed=?, source_reported_total=?, error_message=NULL
+                   WHERE universe_id=? AND page=?""",
+                (
+                    retrieved_at,
+                    snapshot_id,
+                    len(records),
+                    metadata.total_records,
+                    universe_id,
+                    page,
+                ),
+            )
+            for record in records:
+                obs = self.conn.execute(
+                    """SELECT observation_id
+                       FROM establishment_observations
+                       WHERE snapshot_id=? AND dife_public_id=?
+                       ORDER BY observation_id DESC LIMIT 1""",
+                    (snapshot_id, record.public_id),
+                ).fetchone()
+                if obs is None:
+                    raise RuntimeError("staged DIFE observation not found")
+                self.conn.execute(
+                    """INSERT OR IGNORE INTO national_universe_page_members(
+                           universe_id, page, dife_public_id, observation_id, snapshot_id
+                       ) VALUES(?,?,?,?,?)""",
+                    (
+                        universe_id,
+                        page,
+                        record.public_id,
+                        int(obs["observation_id"]),
+                        snapshot_id,
+                    ),
+                )
+            if run["expected_total"] is None and page == 1:
+                self.conn.execute(
+                    """UPDATE national_universe_runs
+                       SET expected_total=?
+                       WHERE universe_id=?""",
+                    (metadata.total_records, universe_id),
+                )
+            self.conn.execute(
+                """UPDATE national_universe_runs
+                   SET pages_staged=(
+                     SELECT COUNT(*) FROM national_universe_pages
+                     WHERE universe_id=? AND status='STAGED'
+                   )
+                   WHERE universe_id=?""",
+                (universe_id, universe_id),
+            )
+        return {
+            "universe_id": universe_id,
+            "page": page,
+            "snapshot_id": snapshot_id,
+            "records_parsed": len(records),
+            "source_reported_total": metadata.total_records,
+        }
+
+    def expand_national_universe_run(
+        self,
+        universe_id: int,
+        *,
+        planned_at: str,
+    ) -> int:
+        run = self.conn.execute(
+            """SELECT seed_url, page_size, expected_total, status
+               FROM national_universe_runs WHERE universe_id=?""",
+            (universe_id,),
+        ).fetchone()
+        if run is None:
+            raise KeyError(f"national universe not found: {universe_id}")
+        if run["status"] != "RUNNING":
+            raise ValueError("national universe run is not RUNNING")
+        seed = self.conn.execute(
+            """SELECT status FROM national_universe_pages
+               WHERE universe_id=? AND page=1""",
+            (universe_id,),
+        ).fetchone()
+        if seed is None or seed["status"] != "STAGED":
+            raise ValueError("seed page must be STAGED before expansion")
+        expected_total = run["expected_total"]
+        if expected_total is None or int(expected_total) <= 0:
+            raise ValueError("seed page did not expose a positive source total")
+
+        requests = plan_national_pages(
+            int(expected_total),
+            first_page_url=str(run["seed_url"]),
+            page_size=int(run["page_size"]),
+        )
+        with self.conn:
+            for request in requests:
+                if request.page == 1:
+                    continue
+                self.conn.execute(
+                    """INSERT OR IGNORE INTO national_universe_pages(
+                           universe_id, page, source_url, status, planned_at
+                       ) VALUES(?,?,?,?,?)""",
+                    (
+                        universe_id,
+                        request.page,
+                        request.source_url,
+                        "PLANNED",
+                        planned_at,
+                    ),
+                )
+            pages_planned = int(
+                self.conn.execute(
+                    """SELECT COUNT(*) FROM national_universe_pages
+                       WHERE universe_id=?""",
+                    (universe_id,),
+                ).fetchone()[0]
+            )
+            self.conn.execute(
+                """UPDATE national_universe_runs
+                   SET pages_planned=? WHERE universe_id=?""",
+                (pages_planned, universe_id),
+            )
+        return pages_planned
+
+    def mark_national_universe_page_failed(
+        self,
+        universe_id: int,
+        source_url: str,
+        *,
+        failed_at: str,
+        error_message: str,
+    ) -> None:
+        cursor = self.conn.execute(
+            """UPDATE national_universe_pages
+               SET status='FAILED', staged_at=?, error_message=?
+               WHERE universe_id=? AND source_url=? AND status='PLANNED'""",
+            (failed_at, error_message, universe_id, source_url),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("planned national page not found")
+        self.conn.commit()
+
+    def finalize_national_universe_run(
+        self,
+        universe_id: int,
+        *,
+        completed_at: str,
+    ) -> dict[str, object]:
+        run = self.conn.execute(
+            """SELECT universe_label, expected_total, status
+               FROM national_universe_runs WHERE universe_id=?""",
+            (universe_id,),
+        ).fetchone()
+        if run is None:
+            raise KeyError(f"national universe not found: {universe_id}")
+        if run["status"] != "RUNNING":
+            raise ValueError("national universe run is not RUNNING")
+
+        unresolved = int(
+            self.conn.execute(
+                """SELECT COUNT(*) FROM national_universe_pages
+                   WHERE universe_id=? AND status='PLANNED'""",
+                (universe_id,),
+            ).fetchone()[0]
+        )
+        if unresolved:
+            raise ValueError(f"national universe has {unresolved} unresolved page(s)")
+
+        page_rows = self.conn.execute(
+            """SELECT page, status, records_parsed, source_reported_total
+               FROM national_universe_pages
+               WHERE universe_id=? ORDER BY page""",
+            (universe_id,),
+        ).fetchall()
+        member_rows = self.conn.execute(
+            """SELECT dife_public_id
+               FROM national_universe_page_members
+               WHERE universe_id=? ORDER BY page, dife_public_id""",
+            (universe_id,),
+        ).fetchall()
+        quality = assess_national_universe_quality(
+            [
+                NationalPageStatus(
+                    page=int(row["page"]),
+                    status=str(row["status"]),
+                    records_parsed=row["records_parsed"],
+                    source_reported_total=row["source_reported_total"],
+                )
+                for row in page_rows
+            ],
+            [int(row["dife_public_id"]) for row in member_rows],
+            expected_total=(
+                None if run["expected_total"] is None else int(run["expected_total"])
+            ),
+        )
+        qc = asdict(quality)
+        final_status = "COMPLETED" if quality.eligible_for_national_analysis else "FAILED"
+        with self.conn:
+            self.conn.execute(
+                """UPDATE national_universe_runs
+                   SET completed_at=?, status=?, pages_staged=?,
+                       unique_public_ids=?, duplicate_public_ids=?,
+                       eligible_for_national_analysis=?, qc_json=?
+                   WHERE universe_id=?""",
+                (
+                    completed_at,
+                    final_status,
+                    quality.pages_staged,
+                    quality.unique_public_ids,
+                    quality.duplicate_public_ids,
+                    int(quality.eligible_for_national_analysis),
+                    json.dumps(qc, sort_keys=True),
+                    universe_id,
+                ),
+            )
+        return {
+            "universe_id": universe_id,
+            "universe_label": str(run["universe_label"]),
+            "status": final_status,
+            "quality": qc,
+        }
+
+    def national_universe_records(
+        self,
+        universe_label: str,
+        *,
+        require_eligible: bool = True,
+    ) -> list[dict[str, object]]:
+        run = self.conn.execute(
+            """SELECT universe_id, eligible_for_national_analysis
+               FROM national_universe_runs
+               WHERE universe_label=?""",
+            (universe_label,),
+        ).fetchone()
+        if run is None:
+            raise KeyError(f"national universe not found: {universe_label}")
+        if require_eligible and not bool(run["eligible_for_national_analysis"]):
+            raise ValueError("national universe is not eligible for national analysis")
+
+        rows = self.conn.execute(
+            """SELECT
+                   m.dife_public_id,
+                   o.name,
+                   o.sector AS sector_label,
+                   o.district,
+                   o.division,
+                   o.status,
+                   o.licence_class,
+                   o.observed_at
+               FROM national_universe_page_members m
+               JOIN establishment_observations o
+                 ON o.observation_id=m.observation_id
+               WHERE m.universe_id=?
+               ORDER BY m.dife_public_id""",
+            (int(run["universe_id"]),),
+        ).fetchall()
+        result: list[dict[str, object]] = []
+        for row in rows:
+            source_sector = row["sector_label"]
+            result.append({
+                "dife_public_id": int(row["dife_public_id"]),
+                "name": row["name"],
+                "sector_label": source_sector,
+                "sector_family": explicit_sector_family(source_sector) or "UNCLASSIFIED",
+                "district": row["district"],
+                "division": row["division"],
+                "status": row["status"],
+                "licence_class": row["licence_class"],
+                "observed_at": row["observed_at"],
+            })
+        return result
+
+    def national_universe_rollups(
+        self,
+        universe_label: str,
+    ) -> dict[str, object]:
+        records = self.national_universe_records(universe_label, require_eligible=True)
+        return build_national_rollups(records, universe_label=universe_label)
+
+    def national_cluster_context(
+        self,
+        universe_label: str,
+        dife_public_id: int,
+    ) -> dict[str, object]:
+        records = self.national_universe_records(universe_label, require_eligible=True)
+        target = next(
+            (row for row in records if int(row["dife_public_id"]) == dife_public_id),
+            None,
+        )
+        if target is None:
+            raise KeyError(
+                f"establishment {dife_public_id} is not a member of {universe_label}"
+            )
+        universe = [
+            {
+                "district": row["district"],
+                "sector_family": row["sector_family"],
+            }
+            for row in records
+        ]
+        return cluster_context(
+            universe,
+            district=target["district"],
+            sector_family=target["sector_family"],
+            universe_label=universe_label,
+            universe_kind=UniverseKind.NATIONAL_REGISTRY,
+        )
 
     def counts(self) -> dict[str, int]:
         return {

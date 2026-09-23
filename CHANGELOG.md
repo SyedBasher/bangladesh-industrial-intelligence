@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.20.0-dev — 2026-09-23
+
+- Added a separately audited national DIFE snapshot universe, distinct from the stratified validation sample.
+- Added seed-first full-page planning, exact page membership, source-total stability checks, duplicate-ID detection and strict national eligibility.
+- Added explicit UNCLASSIFIED handling for unmapped DIFE sector labels.
+- Added national district/division/sector/status rollups, district-sector shares, location quotients and sector HHI.
+- Added optional safe-product integration with an eligible NATIONAL_REGISTRY cluster universe.
+- Added PostgreSQL migration parity and methodology documentation.
+- No live national DIFE crawl has been executed.
+
 ## v0.19.0-dev — 2026-09-23
 
 - Added calculated evidence freshness using source vintage with observation-time fallback.
