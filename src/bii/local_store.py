@@ -624,6 +624,21 @@ CREATE TABLE IF NOT EXISTS national_universe_page_members (
 );
 
 
+
+CREATE TABLE IF NOT EXISTS national_ingest_sources (
+    universe_id INTEGER PRIMARY KEY REFERENCES national_universe_runs(universe_id),
+    ingest_mode TEXT NOT NULL CHECK(ingest_mode IN (
+        'LIVE_PAGINATED','STAGED_HTML_ARCHIVE','NORMALIZED_BULK_EXPORT'
+    )),
+    artifact_path TEXT,
+    artifact_sha256 TEXT,
+    manifest_json TEXT,
+    imported_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS national_ingest_mode_idx
+    ON national_ingest_sources(ingest_mode, imported_at DESC);
+
 CREATE TABLE IF NOT EXISTS national_snapshot_collection_runs (
     collection_run_id INTEGER PRIMARY KEY,
     universe_id INTEGER NOT NULL REFERENCES national_universe_runs(universe_id),
@@ -3956,6 +3971,249 @@ class LocalValidationStore:
             universe_kind=UniverseKind.NATIONAL_REGISTRY,
         )
 
+
+
+    def record_national_ingest_source(
+        self,
+        universe_id: int,
+        *,
+        ingest_mode: str,
+        artifact_path: str | None,
+        artifact_sha256: str | None,
+        manifest_json: str | None,
+        imported_at: str,
+    ) -> None:
+        allowed = {
+            "LIVE_PAGINATED",
+            "STAGED_HTML_ARCHIVE",
+            "NORMALIZED_BULK_EXPORT",
+        }
+        if ingest_mode not in allowed:
+            raise ValueError(f"unsupported national ingest mode: {ingest_mode}")
+        self.national_universe_run(universe_id)
+        with self.conn:
+            self.conn.execute(
+                """INSERT INTO national_ingest_sources(
+                       universe_id, ingest_mode, artifact_path, artifact_sha256,
+                       manifest_json, imported_at
+                   ) VALUES(?,?,?,?,?,?)
+                   ON CONFLICT(universe_id) DO UPDATE SET
+                     ingest_mode=excluded.ingest_mode,
+                     artifact_path=excluded.artifact_path,
+                     artifact_sha256=excluded.artifact_sha256,
+                     manifest_json=excluded.manifest_json,
+                     imported_at=excluded.imported_at""",
+                (
+                    universe_id,
+                    ingest_mode,
+                    artifact_path,
+                    artifact_sha256,
+                    manifest_json,
+                    imported_at,
+                ),
+            )
+
+    def national_ingest_source(self, universe_id: int) -> dict[str, object]:
+        row = self.conn.execute(
+            """SELECT universe_id, ingest_mode, artifact_path, artifact_sha256,
+                      manifest_json, imported_at
+               FROM national_ingest_sources
+               WHERE universe_id=?""",
+            (universe_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"national ingest provenance not found: {universe_id}")
+        return dict(row)
+
+    def ingest_normalized_national_records(
+        self,
+        universe_id: int,
+        records: list[Mapping[str, object]],
+        *,
+        source_url: str,
+        retrieved_at: str,
+        declared_total: int,
+        artifact_sha256: str,
+        raw_payload_path: str | None,
+        transform_note: str,
+    ) -> dict[str, object]:
+        """Stage one canonical bulk export as a one-snapshot national universe."""
+        if declared_total <= 0:
+            raise ValueError("declared_total must be positive")
+        if not transform_note.strip():
+            raise ValueError("transform_note is required")
+        run = self.national_universe_run(universe_id)
+        if run["status"] != "RUNNING":
+            raise ValueError("national universe run is not RUNNING")
+
+        page = self.conn.execute(
+            """SELECT page, status, source_url
+               FROM national_universe_pages
+               WHERE universe_id=? AND page=1""",
+            (universe_id,),
+        ).fetchone()
+        if page is None or page["status"] != "PLANNED":
+            raise ValueError("bulk import requires an unresolved page-1 national run")
+        if str(page["source_url"]) != source_url:
+            raise ValueError("bulk source_url must match the universe seed_url")
+        if len(records) != declared_total:
+            raise ValueError(
+                f"bulk row count {len(records)} does not match independently "
+                f"declared total {declared_total}"
+            )
+
+        public_ids: list[int] = []
+        for record in records:
+            public_id = int(record["dife_public_id"])
+            if public_id <= 0:
+                raise ValueError("dife_public_id must be positive")
+            if not str(record.get("name") or "").strip():
+                raise ValueError(f"blank establishment name for {public_id}")
+            public_ids.append(public_id)
+        duplicates = [
+            public_id
+            for public_id, count in Counter(public_ids).items()
+            if count > 1
+        ]
+        if duplicates:
+            raise ValueError(
+                "bulk export contains duplicate DIFE public IDs: "
+                + ", ".join(str(value) for value in sorted(duplicates)[:20])
+            )
+
+        with self.conn:
+            self.conn.execute(
+                """INSERT OR IGNORE INTO source_snapshots(
+                       source_name, source_url, retrieved_at, source_reported_at_raw,
+                       source_total_records, content_sha256, raw_payload_path,
+                       parser_version
+                   ) VALUES(?,?,?,?,?,?,?,?)""",
+                (
+                    "DIFE BULK EXPORT",
+                    source_url,
+                    retrieved_at,
+                    None,
+                    declared_total,
+                    artifact_sha256,
+                    raw_payload_path,
+                    "normalized-bulk-1.0",
+                ),
+            )
+            snapshot_id = int(
+                self.conn.execute(
+                    """SELECT snapshot_id FROM source_snapshots
+                       WHERE source_name='DIFE BULK EXPORT'
+                         AND source_url=? AND content_sha256=?""",
+                    (source_url, artifact_sha256),
+                ).fetchone()[0]
+            )
+
+            for record in records:
+                public_id = int(record["dife_public_id"])
+                name = str(record["name"]).strip()
+                canonical = {
+                    "dife_public_id": public_id,
+                    "name": name,
+                    "sector": record.get("sector"),
+                    "location": record.get("location"),
+                    "upazila": record.get("upazila"),
+                    "district": record.get("district"),
+                    "division": record.get("division"),
+                    "licence_class": record.get("licence_class"),
+                    "status": record.get("status"),
+                }
+                row_hash = sha256_text(
+                    json.dumps(
+                        canonical,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                )
+                self.conn.execute(
+                    """INSERT INTO establishments(dife_public_id, canonical_name)
+                       VALUES(?,?)
+                       ON CONFLICT(dife_public_id) DO UPDATE
+                       SET canonical_name=excluded.canonical_name""",
+                    (public_id, name),
+                )
+                self.conn.execute(
+                    """INSERT OR IGNORE INTO establishment_observations(
+                           dife_public_id, snapshot_id, name, sector, location,
+                           upazila, district, division, licence_class, status,
+                           row_sha256, observed_at
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        public_id,
+                        snapshot_id,
+                        name,
+                        record.get("sector"),
+                        record.get("location"),
+                        record.get("upazila"),
+                        record.get("district"),
+                        record.get("division"),
+                        record.get("licence_class"),
+                        record.get("status"),
+                        row_hash,
+                        retrieved_at,
+                    ),
+                )
+                observation_id = int(
+                    self.conn.execute(
+                        """SELECT observation_id
+                           FROM establishment_observations
+                           WHERE snapshot_id=? AND dife_public_id=? AND row_sha256=?""",
+                        (snapshot_id, public_id, row_hash),
+                    ).fetchone()[0]
+                )
+                self.conn.execute(
+                    """INSERT INTO national_universe_page_members(
+                           universe_id, page, dife_public_id, observation_id, snapshot_id
+                       ) VALUES(?,?,?,?,?)""",
+                    (
+                        universe_id,
+                        1,
+                        public_id,
+                        observation_id,
+                        snapshot_id,
+                    ),
+                )
+
+            self.conn.execute(
+                """UPDATE national_universe_pages
+                   SET status='STAGED', staged_at=?, snapshot_id=?,
+                       records_parsed=?, source_reported_total=?, error_message=NULL
+                   WHERE universe_id=? AND page=1""",
+                (
+                    retrieved_at,
+                    snapshot_id,
+                    declared_total,
+                    declared_total,
+                    universe_id,
+                ),
+            )
+            self.conn.execute(
+                """UPDATE national_universe_runs
+                   SET expected_total=?, pages_planned=1, pages_staged=1,
+                       notes=CASE
+                         WHEN notes IS NULL OR notes='' THEN ?
+                         ELSE notes || char(10) || ?
+                       END
+                   WHERE universe_id=?""",
+                (
+                    declared_total,
+                    f"Bulk transform: {transform_note}",
+                    f"Bulk transform: {transform_note}",
+                    universe_id,
+                ),
+            )
+        return {
+            "universe_id": universe_id,
+            "snapshot_id": snapshot_id,
+            "records_parsed": declared_total,
+            "source_reported_total": declared_total,
+            "content_sha256": artifact_sha256,
+        }
 
     def national_universe_run(self, universe_id: int) -> dict[str, object]:
         row = self.conn.execute(
