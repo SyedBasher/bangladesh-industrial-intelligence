@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mangrove-intelligence.example/schemas/national_district_profile_v1.schema.json",
+  "title": "Bangladesh Industrial Intelligence National District Profile v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "universe",
+    "district",
+    "coverage",
+    "composition",
+    "concentration",
+    "drilldown",
+    "method"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "universe": {
+      "$ref": "national_dashboard_v1.schema.json#/properties/universe"
+    },
+    "district": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "establishments",
+        "share_national_pct"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "establishments": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "share_national_pct": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      }
+    },
+    "coverage": {
+      "type": "object"
+    },
+    "composition": {
+      "type": "object"
+    },
+    "concentration": {
+      "type": "object"
+    },
+    "drilldown": {
+      "type": "object"
+    },
+    "method": {
+      "type": "object"
+    }
+  }
+}
