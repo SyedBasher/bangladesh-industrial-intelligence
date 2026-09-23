@@ -1,6 +1,10 @@
 import pytest
 
 from bii.local_store import LocalValidationStore
+from bii.national_universe import (
+    NationalDuplicatePublicIdError,
+    NationalSourceTotalDriftError,
+)
 
 
 def _page(total: int, rows: list[tuple[int, str, str, str, str]]) -> str:
@@ -131,20 +135,18 @@ def test_total_drift_blocks_national_analysis(tmp_path):
             run_id,
             planned_at="2026-09-24T01:02:00+06:00",
         )
-        store.ingest_national_universe_page(
-            run_id,
-            _page(4, [(3, "C", "ফুড ইন্ডাষ্ট্রিজ", "ঢাকা, ঢাকা, ঢাকা", "নিবন্ধিত")]),
-            source_url="https://lima.dife.gov.bd/public-report/establishment-list?page=2",
-            retrieved_at="2026-09-24T01:03:00+06:00",
-        )
-        result = store.finalize_national_universe_run(
-            run_id,
-            completed_at="2026-09-24T01:04:00+06:00",
-        )
-        assert result["status"] == "FAILED"
-        assert result["quality"]["source_total_stable"] is False
-        with pytest.raises(ValueError):
-            store.national_universe_records("drift_demo")
+        with pytest.raises(NationalSourceTotalDriftError):
+            store.ingest_national_universe_page(
+                run_id,
+                _page(4, [(3, "C", "ফুড ইন্ডাষ্ট্রিজ", "ঢাকা, ঢাকা, ঢাকা", "নিবন্ধিত")]),
+                source_url="https://lima.dife.gov.bd/public-report/establishment-list?page=2",
+                retrieved_at="2026-09-24T01:03:00+06:00",
+            )
+        assert store.conn.execute(
+            """SELECT COUNT(*) FROM national_universe_page_members
+               WHERE universe_id=? AND page=2""",
+            (run_id,),
+        ).fetchone()[0] == 0
 
 
 def test_duplicate_across_pages_blocks_national_analysis(tmp_path):
@@ -166,18 +168,18 @@ def test_duplicate_across_pages_blocks_national_analysis(tmp_path):
             run_id,
             planned_at="2026-09-24T01:02:00+06:00",
         )
-        store.ingest_national_universe_page(
-            run_id,
-            _page(3, [(2, "B", "ফুড ইন্ডাষ্ট্রিজ", "ঢাকা, ঢাকা, ঢাকা", "নিবন্ধিত")]),
-            source_url="https://lima.dife.gov.bd/public-report/establishment-list?page=2",
-            retrieved_at="2026-09-24T01:03:00+06:00",
-        )
-        result = store.finalize_national_universe_run(
-            run_id,
-            completed_at="2026-09-24T01:04:00+06:00",
-        )
-        assert result["status"] == "FAILED"
-        assert result["quality"]["duplicate_public_ids"] == 1
+        with pytest.raises(NationalDuplicatePublicIdError):
+            store.ingest_national_universe_page(
+                run_id,
+                _page(3, [(2, "B", "ফুড ইন্ডাষ্ট্রিজ", "ঢাকা, ঢাকা, ঢাকা", "নিবন্ধিত")]),
+                source_url="https://lima.dife.gov.bd/public-report/establishment-list?page=2",
+                retrieved_at="2026-09-24T01:03:00+06:00",
+            )
+        assert store.conn.execute(
+            """SELECT COUNT(*) FROM national_universe_page_members
+               WHERE universe_id=? AND page=2""",
+            (run_id,),
+        ).fetchone()[0] == 0
 
 
 def test_unresolved_page_prevents_finalize(tmp_path):
