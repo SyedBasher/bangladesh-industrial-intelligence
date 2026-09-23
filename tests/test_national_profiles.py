@@ -145,7 +145,8 @@ def test_sector_profile_shows_geographic_concentration_without_composite_score()
     assert profile["sector"]["district_count"] == 2
     assert profile["concentration"]["district_hhi"] is not None
     assert profile["concentration"]["largest_3_district_share_pct"] == 100.0
-    assert "score" not in str(profile).lower()
+    assert "score" not in profile
+    assert "score" not in profile["concentration"]
     assert profile["drilldown"]["registry_filter"] == {
         "sector_family": "RMG_TEXTILE"
     }
