@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.22.0-dev — 2026-09-23
+
+- Added policy-independent ingestion of fixed private DIFE HTML archives with manifest/hash validation.
+- Added normalized lawful bulk-export ingestion with canonical columns, transformation provenance and an independently declared source total.
+- Added explicit national-ingestion provenance modes for live pagination, staged HTML and normalized bulk export.
+- Added safe national dashboard JSON and national registry JSONL product contracts.
+- Added national dashboard/registry JSON Schemas and product safety checks preventing private paths, URLs, hashes and internal IDs from leaking.
+- Added PostgreSQL migration parity.
+- No real national DIFE snapshot is committed.
+
 ## v0.21.0-dev — 2026-09-23
 
 - Added bounded, restartable national DIFE snapshot collection batches.
