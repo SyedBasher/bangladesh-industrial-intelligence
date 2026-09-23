@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.14.0-dev — 2026-09-23
+
+- Added scalable local name-block indexing for staged external source records.
+- Added five explicit shortlist priority classes; shortlist ranking is separate from final matching.
+- Added append-only external candidate runs, record-level candidate evidence and resolution outcomes.
+- Added conservative automatic resolution: unique site/org positives may be selected; multiple plausible positives remain ambiguous.
+- Added two-phase application so candidate generation never writes entity links until auto-resolutions are explicitly applied.
+- Preserved NO_STAGED_CANDIDATE as a non-negative state.
+- Added PostgreSQL migration parity for candidate search and resolution.
+
 ## v0.13.0-dev — 2026-09-23
 
 - Added staged parsers and stable-key rules for EPB, BGMEA, BKMEA, BEPZA and DoE.

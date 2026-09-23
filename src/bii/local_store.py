@@ -6,6 +6,13 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Mapping
 
+from .candidate_resolution import (
+    CandidateBlockIndex,
+    CandidateRecord,
+    ResolutionOutcome,
+    resolve_shortlist,
+    shortlist_candidates,
+)
 from .detail_validation import (
     DEFAULT_CHECKPOINT_POLICY,
     CheckpointDecision,
@@ -337,6 +344,64 @@ CREATE TABLE IF NOT EXISTS enrichment_reports (
     generated_at TEXT NOT NULL,
     coverage_json TEXT NOT NULL
 );
+
+
+CREATE TABLE IF NOT EXISTS external_candidate_runs (
+    run_id INTEGER PRIMARY KEY,
+    validation_label TEXT NOT NULL,
+    source_name TEXT NOT NULL REFERENCES external_source_profiles(source_name),
+    generated_at TEXT NOT NULL,
+    max_candidates INTEGER NOT NULL,
+    staged_source_records INTEGER NOT NULL,
+    targets_considered INTEGER NOT NULL,
+    candidates_generated INTEGER NOT NULL,
+    auto_selected INTEGER NOT NULL,
+    ambiguous INTEGER NOT NULL,
+    review_required INTEGER NOT NULL,
+    no_staged_candidate INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS external_match_candidates (
+    candidate_id INTEGER PRIMARY KEY,
+    run_id INTEGER NOT NULL REFERENCES external_candidate_runs(run_id),
+    validation_label TEXT NOT NULL,
+    dife_public_id INTEGER NOT NULL REFERENCES establishments(dife_public_id),
+    source_name TEXT NOT NULL,
+    external_record_id INTEGER NOT NULL REFERENCES external_source_records(external_record_id),
+    shortlist_position INTEGER NOT NULL,
+    priority_class TEXT NOT NULL,
+    name_strength TEXT NOT NULL,
+    name_token_overlap REAL,
+    district_result TEXT NOT NULL,
+    upazila_result TEXT NOT NULL,
+    address_result TEXT NOT NULL,
+    address_overlap REAL,
+    UNIQUE(run_id, dife_public_id, external_record_id)
+);
+
+CREATE TABLE IF NOT EXISTS external_resolution_outcomes (
+    outcome_id INTEGER PRIMARY KEY,
+    run_id INTEGER NOT NULL REFERENCES external_candidate_runs(run_id),
+    validation_label TEXT NOT NULL,
+    dife_public_id INTEGER NOT NULL REFERENCES establishments(dife_public_id),
+    source_name TEXT NOT NULL,
+    outcome TEXT NOT NULL CHECK(outcome IN (
+        'AUTO_SELECTED','AMBIGUOUS','REVIEW_REQUIRED','NO_STAGED_CANDIDATE'
+    )),
+    candidate_count INTEGER NOT NULL,
+    selected_external_record_id INTEGER REFERENCES external_source_records(external_record_id),
+    selected_match_type TEXT,
+    note TEXT NOT NULL,
+    applied_entity_link_id INTEGER REFERENCES entity_links(entity_link_id),
+    UNIQUE(run_id, dife_public_id)
+);
+
+CREATE INDEX IF NOT EXISTS external_candidate_run_source_idx
+    ON external_candidate_runs(validation_label, source_name, generated_at DESC);
+CREATE INDEX IF NOT EXISTS external_candidate_target_idx
+    ON external_match_candidates(run_id, dife_public_id, shortlist_position);
+CREATE INDEX IF NOT EXISTS external_resolution_outcome_idx
+    ON external_resolution_outcomes(run_id, outcome, dife_public_id);
 
 CREATE INDEX IF NOT EXISTS external_record_source_key_idx
     ON external_source_records(source_name, external_key);
@@ -1844,6 +1909,269 @@ class LocalValidationStore:
                 ),
             )
         return int(cursor.lastrowid), coverage
+
+
+    def _candidate_records_for_source(
+        self,
+        source_name: str,
+    ) -> list[CandidateRecord]:
+        rows = self.conn.execute(
+            """SELECT external_record_id
+               FROM external_source_records
+               WHERE source_name=?
+               ORDER BY external_record_id""",
+            (source_name.upper(),),
+        ).fetchall()
+        return [
+            CandidateRecord(
+                external_record_id=int(row["external_record_id"]),
+                payload=self._external_payload(int(row["external_record_id"])),
+            )
+            for row in rows
+        ]
+
+    def generate_external_candidates(
+        self,
+        validation_label: str,
+        source_name: str,
+        *,
+        generated_at: str,
+        max_candidates: int = 5,
+    ) -> dict[str, int]:
+        """Shortlist and resolve candidates from the currently staged source index.
+
+        An empty shortlist is recorded as NO_STAGED_CANDIDATE and never converted
+        into a negative business fact.
+        """
+        if max_candidates <= 0:
+            raise ValueError("max_candidates must be positive")
+        source_name = source_name.upper()
+        self._ensure_external_source_profile(source_name)
+
+        targets = self.conn.execute(
+            """SELECT dife_public_id
+               FROM enrichment_targets
+               WHERE validation_label=? AND source_name=? AND eligible=1
+               ORDER BY dife_public_id""",
+            (validation_label, source_name),
+        ).fetchall()
+        if not targets:
+            raise ValueError(
+                f"no eligible enrichment targets planned for {validation_label!r} {source_name}"
+            )
+
+        source_records = self._candidate_records_for_source(source_name)
+        block_index = CandidateBlockIndex.build(source_records)
+        with self.conn:
+            cursor = self.conn.execute(
+                """INSERT INTO external_candidate_runs(
+                       validation_label, source_name, generated_at, max_candidates,
+                       staged_source_records, targets_considered, candidates_generated,
+                       auto_selected, ambiguous, review_required, no_staged_candidate
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    validation_label,
+                    source_name,
+                    generated_at,
+                    max_candidates,
+                    len(source_records),
+                    len(targets),
+                    0, 0, 0, 0, 0,
+                ),
+            )
+            run_id = int(cursor.lastrowid)
+
+        total_candidates = 0
+        outcome_counts = {
+            "AUTO_SELECTED": 0,
+            "AMBIGUOUS": 0,
+            "REVIEW_REQUIRED": 0,
+            "NO_STAGED_CANDIDATE": 0,
+        }
+
+        source_by_id = {
+            record.external_record_id: record
+            for record in source_records
+        }
+
+        for target in targets:
+            dife_public_id = int(target["dife_public_id"])
+            dife = self._dife_match_record(validation_label, dife_public_id)
+            blocked_records = block_index.records_for(dife)
+            signals = shortlist_candidates(
+                dife,
+                blocked_records,
+                max_candidates=max_candidates,
+            )
+            shortlisted = [
+                source_by_id[signal.external_record_id]
+                for signal in signals
+            ]
+            resolution = resolve_shortlist(dife, shortlisted)
+            outcome_counts[str(resolution.outcome)] += 1
+            total_candidates += len(signals)
+
+            with self.conn:
+                self.conn.executemany(
+                    """INSERT INTO external_match_candidates(
+                           run_id, validation_label, dife_public_id, source_name,
+                           external_record_id, shortlist_position, priority_class,
+                           name_strength, name_token_overlap, district_result,
+                           upazila_result, address_result, address_overlap
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    [
+                        (
+                            run_id,
+                            validation_label,
+                            dife_public_id,
+                            source_name,
+                            signal.external_record_id,
+                            position,
+                            str(signal.priority),
+                            signal.name_strength,
+                            signal.name_token_overlap,
+                            signal.district_result,
+                            signal.upazila_result,
+                            signal.address_result,
+                            signal.address_overlap,
+                        )
+                        for position, signal in enumerate(signals, start=1)
+                    ],
+                )
+                self.conn.execute(
+                    """INSERT INTO external_resolution_outcomes(
+                           run_id, validation_label, dife_public_id, source_name,
+                           outcome, candidate_count, selected_external_record_id,
+                           selected_match_type, note
+                       ) VALUES(?,?,?,?,?,?,?,?,?)""",
+                    (
+                        run_id,
+                        validation_label,
+                        dife_public_id,
+                        source_name,
+                        str(resolution.outcome),
+                        resolution.candidate_count,
+                        resolution.selected_external_record_id,
+                        (
+                            None
+                            if resolution.selected_match_type is None
+                            else str(resolution.selected_match_type)
+                        ),
+                        resolution.note,
+                    ),
+                )
+                if signals:
+                    self.conn.execute(
+                        """UPDATE enrichment_targets
+                           SET status=CASE
+                               WHEN status='PENDING' THEN 'STAGED'
+                               ELSE status
+                           END
+                           WHERE validation_label=? AND source_name=? AND dife_public_id=?""",
+                        (validation_label, source_name, dife_public_id),
+                    )
+
+        with self.conn:
+            self.conn.execute(
+                """UPDATE external_candidate_runs
+                   SET candidates_generated=?, auto_selected=?, ambiguous=?,
+                       review_required=?, no_staged_candidate=?
+                   WHERE run_id=?""",
+                (
+                    total_candidates,
+                    outcome_counts["AUTO_SELECTED"],
+                    outcome_counts["AMBIGUOUS"],
+                    outcome_counts["REVIEW_REQUIRED"],
+                    outcome_counts["NO_STAGED_CANDIDATE"],
+                    run_id,
+                ),
+            )
+
+        return {
+            "run_id": run_id,
+            "targets_considered": len(targets),
+            "staged_source_records": len(source_records),
+            "candidates_generated": total_candidates,
+            "auto_selected": outcome_counts["AUTO_SELECTED"],
+            "ambiguous": outcome_counts["AMBIGUOUS"],
+            "review_required": outcome_counts["REVIEW_REQUIRED"],
+            "no_staged_candidate": outcome_counts["NO_STAGED_CANDIDATE"],
+        }
+
+    def candidate_run_outcomes(
+        self,
+        run_id: int,
+    ) -> list[dict[str, object]]:
+        rows = self.conn.execute(
+            """SELECT dife_public_id, source_name, outcome, candidate_count,
+                      selected_external_record_id, selected_match_type, note,
+                      applied_entity_link_id
+               FROM external_resolution_outcomes
+               WHERE run_id=?
+               ORDER BY dife_public_id""",
+            (run_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def candidates_for_target(
+        self,
+        run_id: int,
+        dife_public_id: int,
+    ) -> list[dict[str, object]]:
+        rows = self.conn.execute(
+            """SELECT c.shortlist_position, c.priority_class, c.name_strength,
+                      c.name_token_overlap, c.district_result, c.upazila_result,
+                      c.address_result, c.address_overlap, c.external_record_id,
+                      r.external_key, r.entity_name, r.site_text, r.district, r.upazila
+               FROM external_match_candidates c
+               JOIN external_source_records r
+                 ON r.external_record_id=c.external_record_id
+               WHERE c.run_id=? AND c.dife_public_id=?
+               ORDER BY c.shortlist_position""",
+            (run_id, dife_public_id),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def apply_auto_resolutions(
+        self,
+        run_id: int,
+        *,
+        applied_at: str,
+        rule_version: str = "1.4",
+    ) -> int:
+        """Create entity links only for unambiguous AUTO_SELECTED outcomes."""
+        rows = self.conn.execute(
+            """SELECT outcome_id, validation_label, dife_public_id,
+                      selected_external_record_id
+               FROM external_resolution_outcomes
+               WHERE run_id=? AND outcome='AUTO_SELECTED'
+                 AND applied_entity_link_id IS NULL
+               ORDER BY dife_public_id""",
+            (run_id,),
+        ).fetchall()
+
+        applied = 0
+        for row in rows:
+            external_record_id = row["selected_external_record_id"]
+            if external_record_id is None:
+                raise RuntimeError("AUTO_SELECTED outcome is missing its external record")
+            link = self.review_external_link(
+                str(row["validation_label"]),
+                int(row["dife_public_id"]),
+                int(external_record_id),
+                reviewed_at=applied_at,
+                multiple_candidates=False,
+                rule_version=rule_version,
+            )
+            with self.conn:
+                self.conn.execute(
+                    """UPDATE external_resolution_outcomes
+                       SET applied_entity_link_id=?
+                       WHERE outcome_id=?""",
+                    (int(link["entity_link_id"]), int(row["outcome_id"])),
+                )
+            applied += 1
+        return applied
 
     def counts(self) -> dict[str, int]:
         return {
