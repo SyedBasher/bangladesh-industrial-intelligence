@@ -49,3 +49,10 @@ pytest -q
 ## Data rule
 
 Do not commit real DIFE/EPB/BGMEA/BKMEA/BEPZA/DoE extracts to this repository. Keep raw and derived datasets outside GitHub and retain exact source URLs, retrieval times, source vintages and content hashes in the private data layer.
+
+
+## Standalone interface preview
+
+A development preview is available at the repository root as `index.html`.
+
+It is deliberately dependency-free: download or clone the repository and open `index.html` directly in a browser. The displayed establishment records are synthetic demo records; no private validation data or source extracts are embedded in the public file.

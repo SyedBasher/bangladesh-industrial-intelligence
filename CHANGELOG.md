@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.16.0-dev — 2026-09-23
+
+- Added deduplicated BGMEA/EPB external-detail retrieval orchestration.
+- Added failure/status tracking for source-detail requests.
+- Added a fetch-to-resolution controller that reruns candidate matching after richer external profiles are staged and applies only unambiguous auto-selected links.
+- Added a standalone root `index.html` dashboard preview with synthetic records and no private data dependency.
+
 ## v0.15.0-dev — 2026-09-23
 
 - Added BGMEA general-member index parsing with source-reported totals, pagination and stable /member/<id> keys.
