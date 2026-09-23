@@ -41,6 +41,10 @@ from .external_sources import (
     source_spec,
 )
 from .hashutil import sha256_text
+from .intelligence_observations import (
+    ObservationScope,
+    extract_typed_observations,
+)
 from .parsers import extract_public_id, parse_dife_detail, parse_dife_list_page
 from .policy import SourceAccessPolicy
 from .sampling import ValidationCandidate
@@ -310,6 +314,41 @@ CREATE TABLE IF NOT EXISTS external_record_versions (
     observed_at TEXT NOT NULL,
     UNIQUE(external_record_id, content_sha256)
 );
+
+
+CREATE TABLE IF NOT EXISTS external_typed_observations (
+    typed_observation_id INTEGER PRIMARY KEY,
+    external_version_id INTEGER NOT NULL REFERENCES external_record_versions(external_version_id),
+    source_name TEXT NOT NULL,
+    observation_type TEXT NOT NULL,
+    scope TEXT NOT NULL CHECK(scope IN ('SITE','ORGANIZATION')),
+    value_text TEXT,
+    value_numeric REAL,
+    unit TEXT,
+    raw_label TEXT NOT NULL,
+    raw_value TEXT NOT NULL,
+    source_updated_at_raw TEXT,
+    observed_at TEXT NOT NULL,
+    observation_sha256 TEXT NOT NULL,
+    UNIQUE(external_version_id, observation_sha256)
+);
+
+CREATE TABLE IF NOT EXISTS linked_intelligence_observations (
+    linked_intelligence_id INTEGER PRIMARY KEY,
+    entity_link_id INTEGER NOT NULL REFERENCES entity_links(entity_link_id),
+    typed_observation_id INTEGER NOT NULL REFERENCES external_typed_observations(typed_observation_id),
+    validation_label TEXT NOT NULL,
+    dife_public_id INTEGER NOT NULL REFERENCES establishments(dife_public_id),
+    display_scope TEXT NOT NULL CHECK(display_scope IN ('SITE','ORGANIZATION')),
+    site_attributable INTEGER NOT NULL,
+    linked_at TEXT NOT NULL,
+    UNIQUE(entity_link_id, typed_observation_id)
+);
+
+CREATE INDEX IF NOT EXISTS typed_observation_version_idx
+    ON external_typed_observations(external_version_id, observation_type, scope);
+CREATE INDEX IF NOT EXISTS linked_intelligence_establishment_idx
+    ON linked_intelligence_observations(validation_label, dife_public_id, linked_intelligence_id);
 
 CREATE TABLE IF NOT EXISTS enrichment_targets (
     validation_label TEXT NOT NULL,
