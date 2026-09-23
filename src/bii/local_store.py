@@ -12,6 +12,7 @@ from .admin_geography import (
     AdminUnit,
     AdministrativeGeographyCrosswalk,
     GeoAlias,
+    normalize_admin_name,
 )
 from .analytical_intelligence import UniverseKind, cluster_context
 from .ddm_aware import (
@@ -4168,6 +4169,197 @@ class LocalValidationStore:
         return filter_registry_for_profile(registry, profile)
 
 
+    def ingest_admin_geography(
+        self,
+        units: list[AdminUnit],
+        aliases: list[GeoAlias] | None = None,
+    ) -> dict[str, int]:
+        if not units:
+            raise ValueError("admin geography units are required")
+        aliases = list(aliases or [])
+        crosswalk = AdministrativeGeographyCrosswalk(units, aliases)
+        with self.conn:
+            for unit in crosswalk.units:
+                self.conn.execute(
+                    """INSERT INTO admin_geography_units(
+                           geo_ref, level, division_code, division_name_en,
+                           division_name_bn, district_code, district_name_en,
+                           district_name_bn, upazila_code, upazila_name_en,
+                           upazila_name_bn, source_name, source_vintage
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+                       ON CONFLICT(geo_ref) DO UPDATE SET
+                         level=excluded.level,
+                         division_code=excluded.division_code,
+                         division_name_en=excluded.division_name_en,
+                         division_name_bn=excluded.division_name_bn,
+                         district_code=excluded.district_code,
+                         district_name_en=excluded.district_name_en,
+                         district_name_bn=excluded.district_name_bn,
+                         upazila_code=excluded.upazila_code,
+                         upazila_name_en=excluded.upazila_name_en,
+                         upazila_name_bn=excluded.upazila_name_bn,
+                         source_name=excluded.source_name,
+                         source_vintage=excluded.source_vintage""",
+                    (
+                        unit.geo_ref,
+                        unit.level.value,
+                        unit.division_code,
+                        unit.division_name_en,
+                        unit.division_name_bn,
+                        unit.district_code,
+                        unit.district_name_en,
+                        unit.district_name_bn,
+                        unit.upazila_code,
+                        unit.upazila_name_en,
+                        unit.upazila_name_bn,
+                        unit.source_name,
+                        unit.source_vintage,
+                    ),
+                )
+            for alias in crosswalk.aliases:
+                self.conn.execute(
+                    """INSERT OR IGNORE INTO admin_geography_aliases(
+                           level, alias, normalized_alias, geo_ref,
+                           source_name, note
+                       ) VALUES(?,?,?,?,?,?)""",
+                    (
+                        alias.level.value,
+                        alias.alias,
+                        normalize_admin_name(alias.alias),
+                        alias.geo_ref,
+                        alias.source_name,
+                        alias.note,
+                    ),
+                )
+        return {
+            "units": len(crosswalk.units),
+            "aliases": len(crosswalk.aliases),
+        }
+
+    def admin_geography_crosswalk(self) -> AdministrativeGeographyCrosswalk:
+        unit_rows = self.conn.execute(
+            """SELECT geo_ref, level, division_code, division_name_en,
+                      division_name_bn, district_code, district_name_en,
+                      district_name_bn, upazila_code, upazila_name_en,
+                      upazila_name_bn, source_name, source_vintage
+               FROM admin_geography_units
+               ORDER BY geo_ref"""
+        ).fetchall()
+        if not unit_rows:
+            raise ValueError("canonical administrative geography has not been loaded")
+
+        units = [
+            AdminUnit(
+                geo_ref=str(row["geo_ref"]),
+                level=AdminLevel(str(row["level"])),
+                division_code=str(row["division_code"]),
+                division_name_en=str(row["division_name_en"]),
+                division_name_bn=row["division_name_bn"],
+                district_code=row["district_code"],
+                district_name_en=row["district_name_en"],
+                district_name_bn=row["district_name_bn"],
+                upazila_code=row["upazila_code"],
+                upazila_name_en=row["upazila_name_en"],
+                upazila_name_bn=row["upazila_name_bn"],
+                source_name=str(row["source_name"]),
+                source_vintage=row["source_vintage"],
+            )
+            for row in unit_rows
+        ]
+        alias_rows = self.conn.execute(
+            """SELECT level, alias, geo_ref, source_name, note
+               FROM admin_geography_aliases
+               ORDER BY alias_id"""
+        ).fetchall()
+        aliases = [
+            GeoAlias(
+                level=AdminLevel(str(row["level"])),
+                alias=str(row["alias"]),
+                geo_ref=str(row["geo_ref"]),
+                source_name=str(row["source_name"]),
+                note=str(row["note"]),
+            )
+            for row in alias_rows
+        ]
+        return AdministrativeGeographyCrosswalk(units, aliases)
+
+    def ingest_ddm_aware_risk_html(
+        self,
+        html: str,
+        *,
+        source_vintage: str | None,
+        observed_at: str,
+        imported_at: str,
+        source_reference: str,
+    ) -> dict[str, object]:
+        crosswalk = self.admin_geography_crosswalk()
+        records = parse_ddm_aware_risk_html(html)
+        converted = ddm_records_to_exposure_observations(
+            records,
+            crosswalk,
+            source_vintage=source_vintage,
+            observed_at=observed_at,
+        )
+
+        self.record_spatial_exposure_source(
+            DDM_AWARE_SOURCE_NAME,
+            authority=(
+                "Department of Disaster Management (DDM), "
+                "Ministry of Disaster Management and Relief"
+            ),
+            methodology_note=(
+                "Staged DDM AWARE district Risk Information table. Published "
+                "Hazard Exposure, Vulnerability, Lack of Coping Capacity, Risk "
+                "and Climate Zone categories are preserved as source text. "
+                "No numeric risk score is created."
+            ),
+            imported_at=imported_at,
+            source_reference=source_reference,
+        )
+        staged = self.ingest_spatial_exposure_observations(
+            DDM_AWARE_SOURCE_NAME,
+            [dict(row) for row in converted.observations],
+        )
+        unresolved_json = json.dumps(
+            [
+                {
+                    "division": row.division,
+                    "district": row.district,
+                    "status": row.status,
+                }
+                for row in converted.unresolved
+            ],
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        with self.conn:
+            cursor = self.conn.execute(
+                """INSERT INTO ddm_aware_import_runs(
+                       source_name, source_reference, source_vintage,
+                       observed_at, imported_at, source_records,
+                       mapped_districts, observations_staged, unresolved_json
+                   ) VALUES(?,?,?,?,?,?,?,?,?)""",
+                (
+                    DDM_AWARE_SOURCE_NAME,
+                    source_reference,
+                    source_vintage,
+                    observed_at,
+                    imported_at,
+                    converted.source_records,
+                    converted.mapped_districts,
+                    staged,
+                    unresolved_json,
+                ),
+            )
+        return {
+            "import_id": int(cursor.lastrowid),
+            "source_records": converted.source_records,
+            "mapped_districts": converted.mapped_districts,
+            "observations_generated": len(converted.observations),
+            "observations_staged": staged,
+            "unresolved": json.loads(unresolved_json),
+        }
+
     def record_spatial_exposure_source(
         self,
         source_name: str,
@@ -4311,7 +4503,15 @@ class LocalValidationStore:
             generated_at=generated_at,
         )
         observations = self.spatial_exposure_product_observations()
-        return link_exposure_observations(registry, observations)
+        try:
+            crosswalk = self.admin_geography_crosswalk()
+        except ValueError:
+            crosswalk = None
+        return link_exposure_observations(
+            registry,
+            observations,
+            geography_crosswalk=crosswalk,
+        )
 
     def national_establishment_exposure_profile(
         self,
@@ -4335,9 +4535,9 @@ class LocalValidationStore:
             raise KeyError(
                 f"establishment {establishment_ref!r} not found in {universe_label}"
             )
-        links = link_exposure_observations(
-            registry,
-            self.spatial_exposure_product_observations(),
+        links = self.national_exposure_links(
+            universe_label,
+            generated_at=generated_at,
         )
         return build_establishment_exposure_profile(
             row,
