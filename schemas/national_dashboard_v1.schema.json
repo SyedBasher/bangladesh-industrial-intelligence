@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mangrove-intelligence.example/schemas/national_dashboard_v1.schema.json",
+  "title": "Bangladesh Industrial Intelligence National Dashboard v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "universe",
+    "summary",
+    "districts",
+    "divisions",
+    "sector_families",
+    "district_sector_cells",
+    "statuses",
+    "source_sector_labels",
+    "method"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "universe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "kind",
+        "source",
+        "completed_at",
+        "expected_total",
+        "unique_public_ids",
+        "ingest_mode",
+        "eligible_for_national_analysis"
+      ],
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "kind": {
+          "const": "NATIONAL_REGISTRY"
+        },
+        "source": {
+          "const": "DIFE"
+        },
+        "completed_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expected_total": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "unique_public_ids": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "ingest_mode": {
+          "enum": [
+            "LIVE_PAGINATED",
+            "STAGED_HTML_ARCHIVE",
+            "NORMALIZED_BULK_EXPORT"
+          ]
+        },
+        "eligible_for_national_analysis": {
+          "const": true
+        }
+      }
+    },
+    "summary": {
+      "type": "object"
+    },
+    "districts": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "divisions": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "sector_families": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "district_sector_cells": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "statuses": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "source_sector_labels": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "method": {
+      "type": "object"
+    }
+  }
+}
