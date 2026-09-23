@@ -23,6 +23,7 @@ from .freeze import (
 )
 from .hashutil import sha256_text
 from .parsers import extract_public_id, parse_dife_detail, parse_dife_list_page
+from .policy import SourceAccessPolicy
 from .sampling import ValidationCandidate
 from .supplement import SupplementRequest
 
@@ -183,6 +184,39 @@ CREATE TABLE IF NOT EXISTS detail_checkpoint_decisions (
     policy_json TEXT NOT NULL,
     reasons_json TEXT NOT NULL
 );
+
+
+CREATE TABLE IF NOT EXISTS access_policy_reviews (
+    review_id INTEGER PRIMARY KEY,
+    source_name TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    reviewed_at TEXT NOT NULL,
+    review_note TEXT NOT NULL,
+    allowed_hosts_json TEXT NOT NULL,
+    allowed_path_prefixes_json TEXT NOT NULL,
+    requests_per_minute REAL NOT NULL,
+    max_retries INTEGER NOT NULL,
+    timeout_seconds REAL NOT NULL,
+    recorded_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS detail_collection_runs (
+    run_id INTEGER PRIMARY KEY,
+    validation_label TEXT NOT NULL,
+    checkpoint_n INTEGER NOT NULL,
+    policy_review_id INTEGER NOT NULL REFERENCES access_policy_reviews(review_id),
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    status TEXT NOT NULL CHECK(status IN ('RUNNING','COMPLETED','FAILED')),
+    attempted INTEGER NOT NULL DEFAULT 0,
+    parsed INTEGER NOT NULL DEFAULT 0,
+    failed INTEGER NOT NULL DEFAULT 0,
+    raw_directory TEXT NOT NULL,
+    notes TEXT
+);
+
+CREATE INDEX IF NOT EXISTS collection_run_checkpoint_idx
+    ON detail_collection_runs(validation_label, checkpoint_n, started_at DESC);
 
 CREATE INDEX IF NOT EXISTS detail_request_checkpoint_idx
     ON detail_requests(validation_label, first_checkpoint, status);
@@ -975,6 +1009,115 @@ class LocalValidationStore:
                         (evaluated_at, validation_label, int(next_row["checkpoint_n"])),
                     )
         return metrics, decision
+
+
+    def record_access_policy_review(
+        self,
+        policy: SourceAccessPolicy,
+        *,
+        recorded_at: str,
+    ) -> int:
+        """Persist the exact reviewed access policy used for a live collection run."""
+        policy.assert_live_collection_allowed()
+        with self.conn:
+            cursor = self.conn.execute(
+                """INSERT INTO access_policy_reviews(
+                       source_name, decision, reviewed_at, review_note,
+                       allowed_hosts_json, allowed_path_prefixes_json,
+                       requests_per_minute, max_retries, timeout_seconds, recorded_at
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    policy.source_name,
+                    str(policy.decision),
+                    str(policy.reviewed_at),
+                    policy.review_note,
+                    json.dumps(list(policy.allowed_hosts), sort_keys=True),
+                    json.dumps(list(policy.allowed_path_prefixes), sort_keys=True),
+                    float(policy.requests_per_minute),
+                    int(policy.max_retries),
+                    float(policy.timeout_seconds),
+                    recorded_at,
+                ),
+            )
+        return int(cursor.lastrowid)
+
+    def start_detail_collection_run(
+        self,
+        *,
+        validation_label: str,
+        checkpoint_n: int,
+        policy_review_id: int,
+        started_at: str,
+        raw_directory: str,
+        notes: str | None = None,
+    ) -> int:
+        checkpoint = self.conn.execute(
+            """SELECT state FROM detail_checkpoints
+               WHERE validation_label=? AND checkpoint_n=?""",
+            (validation_label, checkpoint_n),
+        ).fetchone()
+        if checkpoint is None:
+            raise KeyError(f"unknown detail checkpoint: {validation_label} {checkpoint_n}")
+        if checkpoint["state"] != "READY":
+            raise ValueError(
+                f"checkpoint {checkpoint_n} is {checkpoint['state']}, not READY"
+            )
+        with self.conn:
+            cursor = self.conn.execute(
+                """INSERT INTO detail_collection_runs(
+                       validation_label, checkpoint_n, policy_review_id,
+                       started_at, status, raw_directory, notes
+                   ) VALUES(?,?,?,?,?,?,?)""",
+                (
+                    validation_label,
+                    checkpoint_n,
+                    policy_review_id,
+                    started_at,
+                    "RUNNING",
+                    raw_directory,
+                    notes,
+                ),
+            )
+        return int(cursor.lastrowid)
+
+    def finish_detail_collection_run(
+        self,
+        run_id: int,
+        *,
+        completed_at: str,
+        attempted: int,
+        parsed: int,
+        failed: int,
+        status: str = "COMPLETED",
+        notes: str | None = None,
+    ) -> None:
+        if status not in {"COMPLETED", "FAILED"}:
+            raise ValueError("final run status must be COMPLETED or FAILED")
+        if min(attempted, parsed, failed) < 0 or parsed + failed > attempted:
+            raise ValueError("invalid collection run counts")
+        cursor = self.conn.execute(
+            """UPDATE detail_collection_runs
+               SET completed_at=?, status=?, attempted=?, parsed=?, failed=?,
+                   notes=COALESCE(?, notes)
+               WHERE run_id=? AND status='RUNNING'""",
+            (completed_at, status, attempted, parsed, failed, notes, run_id),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError(f"collection run {run_id} is not RUNNING")
+        self.conn.commit()
+
+    def detail_collection_run(self, run_id: int) -> dict[str, object]:
+        row = self.conn.execute(
+            """SELECT r.*, p.source_name, p.decision, p.reviewed_at,
+                      p.review_note, p.requests_per_minute
+               FROM detail_collection_runs r
+               JOIN access_policy_reviews p ON p.review_id=r.policy_review_id
+               WHERE r.run_id=?""",
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"collection run not found: {run_id}")
+        return dict(row)
 
     def counts(self) -> dict[str, int]:
         return {
