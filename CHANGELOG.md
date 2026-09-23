@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.17.0-dev — 2026-09-23
+
+- Added typed BGMEA/EPB observations for employment, machines, capacity, products, HS codes, markets, certifications and registrations.
+- Added explicit SITE versus ORGANIZATION scope to every typed observation.
+- Added linkage safeguards so organization-only matches cannot propagate site attributes.
+- Added product-facing establishment intelligence profiles with source, match type, scope, raw value, parsed value and vintage.
+- Added PostgreSQL migration parity for typed and linked intelligence observations.
+- Expanded the standalone dashboard preview to show typed site and organization evidence.
+
 ## v0.16.0-dev — 2026-09-23
 
 - Added deduplicated BGMEA/EPB external-detail retrieval orchestration.
