@@ -44,6 +44,15 @@ from .hashutil import sha256_text
 from .parsers import extract_public_id, parse_dife_detail, parse_dife_list_page
 from .policy import SourceAccessPolicy
 from .sampling import ValidationCandidate
+from .source_index import (
+    IndexRequest,
+    SourceIndexRecord,
+    assess_index_quality,
+    parse_bgmea_member_index,
+    parse_epb_exporter_index_html,
+    parse_epb_exporter_index_json,
+    plan_index_requests,
+)
 from .supplement import SupplementRequest
 from .validation_reporting import (
     DetailComparisonRecord,
@@ -395,6 +404,113 @@ CREATE TABLE IF NOT EXISTS external_resolution_outcomes (
     applied_entity_link_id INTEGER REFERENCES entity_links(entity_link_id),
     UNIQUE(run_id, dife_public_id)
 );
+
+
+CREATE TABLE IF NOT EXISTS external_index_runs (
+    run_id INTEGER PRIMARY KEY,
+    source_name TEXT NOT NULL REFERENCES external_source_profiles(source_name),
+    seed_url TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    status TEXT NOT NULL CHECK(status IN ('RUNNING','COMPLETED','FAILED')),
+    source_reported_total INTEGER,
+    source_reported_last_page INTEGER,
+    pages_planned INTEGER NOT NULL DEFAULT 1,
+    pages_staged INTEGER NOT NULL DEFAULT 0,
+    records_discovered INTEGER NOT NULL DEFAULT 0,
+    unique_keys INTEGER NOT NULL DEFAULT 0,
+    quality_json TEXT,
+    notes TEXT
+);
+
+CREATE TABLE IF NOT EXISTS external_index_pages (
+    index_page_id INTEGER PRIMARY KEY,
+    run_id INTEGER NOT NULL REFERENCES external_index_runs(run_id),
+    page INTEGER NOT NULL,
+    source_url TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PLANNED'
+      CHECK(status IN ('PLANNED','STAGED','FAILED','SKIPPED')),
+    planned_at TEXT NOT NULL,
+    staged_at TEXT,
+    snapshot_id INTEGER REFERENCES source_snapshots(snapshot_id),
+    content_format TEXT,
+    records_parsed INTEGER,
+    source_reported_total INTEGER,
+    source_reported_last_page INTEGER,
+    error_message TEXT,
+    UNIQUE(run_id, page),
+    UNIQUE(run_id, source_url)
+);
+
+CREATE TABLE IF NOT EXISTS external_index_records (
+    index_record_id INTEGER PRIMARY KEY,
+    source_name TEXT NOT NULL REFERENCES external_source_profiles(source_name),
+    source_key TEXT NOT NULL,
+    entity_name TEXT NOT NULL,
+    detail_url TEXT NOT NULL,
+    registration_no TEXT,
+    district TEXT,
+    upazila TEXT,
+    office_address TEXT,
+    factory_address TEXT,
+    first_seen_at TEXT NOT NULL,
+    UNIQUE(source_name, source_key)
+);
+
+CREATE TABLE IF NOT EXISTS external_index_record_versions (
+    index_version_id INTEGER PRIMARY KEY,
+    index_record_id INTEGER NOT NULL REFERENCES external_index_records(index_record_id),
+    run_id INTEGER NOT NULL REFERENCES external_index_runs(run_id),
+    index_page_id INTEGER NOT NULL REFERENCES external_index_pages(index_page_id),
+    row_sha256 TEXT NOT NULL,
+    entity_name TEXT NOT NULL,
+    detail_url TEXT NOT NULL,
+    registration_no TEXT,
+    district TEXT,
+    upazila TEXT,
+    office_address TEXT,
+    factory_address TEXT,
+    observed_at TEXT NOT NULL,
+    UNIQUE(index_record_id, run_id, index_page_id, row_sha256)
+);
+
+CREATE TABLE IF NOT EXISTS external_detail_requests (
+    request_id INTEGER PRIMARY KEY,
+    source_name TEXT NOT NULL REFERENCES external_source_profiles(source_name),
+    source_key TEXT NOT NULL,
+    detail_url TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PLANNED'
+      CHECK(status IN ('PLANNED','FETCHED','FAILED','SKIPPED')),
+    planned_at TEXT NOT NULL,
+    resolved_at TEXT,
+    external_record_id INTEGER REFERENCES external_source_records(external_record_id),
+    error_message TEXT,
+    UNIQUE(source_name, source_key, detail_url)
+);
+
+CREATE TABLE IF NOT EXISTS external_detail_request_targets (
+    request_id INTEGER NOT NULL REFERENCES external_detail_requests(request_id),
+    validation_label TEXT NOT NULL,
+    dife_public_id INTEGER NOT NULL REFERENCES establishments(dife_public_id),
+    index_record_id INTEGER NOT NULL REFERENCES external_index_records(index_record_id),
+    shortlist_position INTEGER NOT NULL,
+    priority_class TEXT NOT NULL,
+    PRIMARY KEY(request_id, validation_label, dife_public_id)
+);
+
+CREATE INDEX IF NOT EXISTS external_index_run_source_idx
+    ON external_index_runs(source_name, started_at DESC);
+CREATE INDEX IF NOT EXISTS external_index_page_status_idx
+    ON external_index_pages(run_id, status, page);
+CREATE INDEX IF NOT EXISTS external_index_record_key_idx
+    ON external_index_records(source_name, source_key);
+CREATE INDEX IF NOT EXISTS external_index_version_run_idx
+    ON external_index_record_versions(run_id, index_record_id);
+CREATE INDEX IF NOT EXISTS external_detail_request_status_idx
+    ON external_detail_requests(source_name, status, request_id);
+CREATE INDEX IF NOT EXISTS external_detail_target_idx
+    ON external_detail_request_targets(validation_label, dife_public_id, request_id);
 
 CREATE INDEX IF NOT EXISTS external_candidate_run_source_idx
     ON external_candidate_runs(validation_label, source_name, generated_at DESC);
@@ -2172,6 +2288,615 @@ class LocalValidationStore:
                 )
             applied += 1
         return applied
+
+
+    def create_external_index_run(
+        self,
+        source_name: str,
+        *,
+        seed_url: str,
+        started_at: str,
+        notes: str | None = None,
+    ) -> int:
+        """Create a source-index run with only the seed page authorized initially."""
+        source_name = source_name.upper()
+        if source_name not in {"BGMEA", "EPB"}:
+            raise ValueError("v1.5 source-index discovery currently supports BGMEA and EPB")
+        self._ensure_external_source_profile(source_name)
+        with self.conn:
+            cursor = self.conn.execute(
+                """INSERT INTO external_index_runs(
+                       source_name, seed_url, started_at, status, pages_planned, notes
+                   ) VALUES(?,?,?,?,?,?)""",
+                (source_name, seed_url, started_at, "RUNNING", 1, notes),
+            )
+            run_id = int(cursor.lastrowid)
+            self.conn.execute(
+                """INSERT INTO external_index_pages(
+                       run_id, page, source_url, reason, status, planned_at
+                   ) VALUES(?,?,?,?,?,?)""",
+                (run_id, 1, seed_url, "INDEX_SEED", "PLANNED", started_at),
+            )
+        return run_id
+
+    def external_index_requests(
+        self,
+        run_id: int,
+        *,
+        status: str = "PLANNED",
+    ) -> list[dict[str, object]]:
+        rows = self.conn.execute(
+            """SELECT index_page_id, page, source_url, reason, status
+               FROM external_index_pages
+               WHERE run_id=? AND status=?
+               ORDER BY page""",
+            (run_id, status),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def ingest_external_index_page(
+        self,
+        run_id: int,
+        payload: str | bytes,
+        *,
+        source_url: str,
+        retrieved_at: str,
+        content_format: str = "html",
+        raw_payload_path: str | None = None,
+        parser_version: str = "1.5",
+    ) -> dict[str, object]:
+        """Stage one BGMEA/EPB directory page and append structured record versions."""
+        run = self.conn.execute(
+            """SELECT source_name, status FROM external_index_runs WHERE run_id=?""",
+            (run_id,),
+        ).fetchone()
+        if run is None:
+            raise KeyError(f"external index run not found: {run_id}")
+        if run["status"] != "RUNNING":
+            raise ValueError("external index run is not RUNNING")
+
+        page_row = self.conn.execute(
+            """SELECT index_page_id, page, status
+               FROM external_index_pages
+               WHERE run_id=? AND source_url=?""",
+            (run_id, source_url),
+        ).fetchone()
+        if page_row is None:
+            raise ValueError("index page was not pre-planned for this run")
+        if page_row["status"] == "STAGED":
+            raise ValueError("index page is already STAGED")
+
+        source_name = str(run["source_name"])
+        if isinstance(payload, bytes):
+            payload_bytes = payload
+            payload_text = payload.decode("utf-8", errors="replace")
+        else:
+            payload_text = payload
+            payload_bytes = payload.encode("utf-8")
+
+        fmt = content_format.lower()
+        if source_name == "BGMEA":
+            if fmt != "html":
+                raise ValueError("BGMEA index parser currently expects HTML")
+            metadata, records = parse_bgmea_member_index(payload_text, source_url=source_url)
+        elif source_name == "EPB":
+            if fmt == "json":
+                metadata, records = parse_epb_exporter_index_json(payload_text, source_url=source_url)
+            elif fmt == "html":
+                metadata, records = parse_epb_exporter_index_html(payload_text, source_url=source_url)
+            else:
+                raise ValueError("EPB index format must be html or json")
+        else:
+            raise ValueError(f"unsupported index source: {source_name}")
+
+        content_hash = sha256_text(payload_text)
+        with self.conn:
+            self.conn.execute(
+                """INSERT OR IGNORE INTO source_snapshots(
+                       source_name, source_url, retrieved_at, source_reported_at_raw,
+                       source_total_records, content_sha256, raw_payload_path, parser_version
+                   ) VALUES(?,?,?,?,?,?,?,?)""",
+                (
+                    f"{source_name} INDEX",
+                    source_url,
+                    retrieved_at,
+                    None,
+                    metadata.total_records,
+                    content_hash,
+                    raw_payload_path,
+                    parser_version,
+                ),
+            )
+            snapshot_id = int(
+                self.conn.execute(
+                    """SELECT snapshot_id FROM source_snapshots
+                       WHERE source_name=? AND source_url=? AND content_sha256=?""",
+                    (f"{source_name} INDEX", source_url, content_hash),
+                ).fetchone()[0]
+            )
+            index_page_id = int(page_row["index_page_id"])
+            self.conn.execute(
+                """UPDATE external_index_pages
+                   SET status='STAGED', staged_at=?, snapshot_id=?, content_format=?,
+                       records_parsed=?, source_reported_total=?,
+                       source_reported_last_page=?, error_message=NULL
+                   WHERE index_page_id=?""",
+                (
+                    retrieved_at,
+                    snapshot_id,
+                    fmt,
+                    len(records),
+                    metadata.total_records,
+                    metadata.last_page,
+                    index_page_id,
+                ),
+            )
+
+            for record in records:
+                self.conn.execute(
+                    """INSERT INTO external_index_records(
+                           source_name, source_key, entity_name, detail_url,
+                           registration_no, district, upazila, office_address,
+                           factory_address, first_seen_at
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?)
+                       ON CONFLICT(source_name, source_key) DO UPDATE SET
+                         entity_name=excluded.entity_name,
+                         detail_url=excluded.detail_url,
+                         registration_no=excluded.registration_no,
+                         district=excluded.district,
+                         upazila=excluded.upazila,
+                         office_address=excluded.office_address,
+                         factory_address=excluded.factory_address""",
+                    (
+                        record.source_name,
+                        record.source_key,
+                        record.entity_name,
+                        record.detail_url,
+                        record.registration_no,
+                        record.district,
+                        record.upazila,
+                        record.office_address,
+                        record.factory_address,
+                        retrieved_at,
+                    ),
+                )
+                index_record_id = int(
+                    self.conn.execute(
+                        """SELECT index_record_id FROM external_index_records
+                           WHERE source_name=? AND source_key=?""",
+                        (record.source_name, record.source_key),
+                    ).fetchone()[0]
+                )
+                row_hash = sha256_text(
+                    json.dumps(asdict(record), ensure_ascii=False, sort_keys=True)
+                )
+                self.conn.execute(
+                    """INSERT OR IGNORE INTO external_index_record_versions(
+                           index_record_id, run_id, index_page_id, row_sha256,
+                           entity_name, detail_url, registration_no, district,
+                           upazila, office_address, factory_address, observed_at
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        index_record_id,
+                        run_id,
+                        index_page_id,
+                        row_hash,
+                        record.entity_name,
+                        record.detail_url,
+                        record.registration_no,
+                        record.district,
+                        record.upazila,
+                        record.office_address,
+                        record.factory_address,
+                        retrieved_at,
+                    ),
+                )
+
+            current_total = self.conn.execute(
+                """SELECT COALESCE(SUM(records_parsed),0)
+                   FROM external_index_pages
+                   WHERE run_id=? AND status='STAGED'""",
+                (run_id,),
+            ).fetchone()[0]
+            unique_keys = self.conn.execute(
+                """SELECT COUNT(DISTINCT index_record_id)
+                   FROM external_index_record_versions
+                   WHERE run_id=?""",
+                (run_id,),
+            ).fetchone()[0]
+            self.conn.execute(
+                """UPDATE external_index_runs
+                   SET source_reported_total=COALESCE(?, source_reported_total),
+                       source_reported_last_page=COALESCE(?, source_reported_last_page),
+                       pages_staged=(
+                         SELECT COUNT(*) FROM external_index_pages
+                         WHERE run_id=? AND status='STAGED'
+                       ),
+                       records_discovered=?,
+                       unique_keys=?
+                   WHERE run_id=?""",
+                (
+                    metadata.total_records,
+                    metadata.last_page,
+                    run_id,
+                    int(current_total),
+                    int(unique_keys),
+                    run_id,
+                ),
+            )
+
+        return {
+            "run_id": run_id,
+            "page": int(page_row["page"]),
+            "snapshot_id": snapshot_id,
+            "records_parsed": len(records),
+            "source_reported_total": metadata.total_records,
+            "source_reported_last_page": metadata.last_page,
+            "content_sha256": content_hash,
+        }
+
+    def expand_external_index_run(
+        self,
+        run_id: int,
+        *,
+        planned_at: str,
+        max_pages: int | None = None,
+    ) -> int:
+        """Expand from the staged seed page only when the source exposes page bounds."""
+        run = self.conn.execute(
+            """SELECT source_name, seed_url, source_reported_total,
+                      source_reported_last_page, status
+               FROM external_index_runs WHERE run_id=?""",
+            (run_id,),
+        ).fetchone()
+        if run is None:
+            raise KeyError(f"external index run not found: {run_id}")
+        if run["status"] != "RUNNING":
+            raise ValueError("external index run is not RUNNING")
+
+        seed = self.conn.execute(
+            """SELECT status, records_parsed FROM external_index_pages
+               WHERE run_id=? AND page=1""",
+            (run_id,),
+        ).fetchone()
+        if seed is None or seed["status"] != "STAGED":
+            raise ValueError("seed index page must be STAGED before expansion")
+
+        from .source_index import SourceIndexMetadata
+        metadata = SourceIndexMetadata(
+            source_name=str(run["source_name"]),
+            total_records=run["source_reported_total"],
+            current_page=1,
+            last_page=run["source_reported_last_page"],
+            records_on_page=int(seed["records_parsed"] or 0),
+            has_next=(
+                None
+                if run["source_reported_last_page"] is None
+                else int(run["source_reported_last_page"]) > 1
+            ),
+        )
+        requests = plan_index_requests(
+            str(run["source_name"]),
+            first_page_url=str(run["seed_url"]),
+            metadata=metadata,
+            max_pages=max_pages,
+        )
+        with self.conn:
+            for request in requests:
+                if request.page == 1:
+                    continue
+                self.conn.execute(
+                    """INSERT OR IGNORE INTO external_index_pages(
+                           run_id, page, source_url, reason, status, planned_at
+                       ) VALUES(?,?,?,?,?,?)""",
+                    (
+                        run_id,
+                        request.page,
+                        request.source_url,
+                        request.reason,
+                        "PLANNED",
+                        planned_at,
+                    ),
+                )
+            pages_planned = int(
+                self.conn.execute(
+                    "SELECT COUNT(*) FROM external_index_pages WHERE run_id=?",
+                    (run_id,),
+                ).fetchone()[0]
+            )
+            self.conn.execute(
+                "UPDATE external_index_runs SET pages_planned=? WHERE run_id=?",
+                (pages_planned, run_id),
+            )
+        return pages_planned
+
+    def mark_external_index_page_failed(
+        self,
+        run_id: int,
+        source_url: str,
+        *,
+        failed_at: str,
+        error_message: str,
+    ) -> None:
+        cursor = self.conn.execute(
+            """UPDATE external_index_pages
+               SET status='FAILED', staged_at=?, error_message=?
+               WHERE run_id=? AND source_url=? AND status='PLANNED'""",
+            (failed_at, error_message, run_id, source_url),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("planned external index page not found")
+        self.conn.commit()
+
+    def finalize_external_index_run(
+        self,
+        run_id: int,
+        *,
+        completed_at: str,
+    ) -> dict[str, object]:
+        """Finalize only after every planned page has resolved."""
+        unresolved = int(
+            self.conn.execute(
+                """SELECT COUNT(*) FROM external_index_pages
+                   WHERE run_id=? AND status='PLANNED'""",
+                (run_id,),
+            ).fetchone()[0]
+        )
+        if unresolved:
+            raise ValueError(f"external index run has {unresolved} unresolved page(s)")
+
+        run = self.conn.execute(
+            "SELECT source_name FROM external_index_runs WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+        if run is None:
+            raise KeyError(f"external index run not found: {run_id}")
+
+        rows = self.conn.execute(
+            """SELECT r.source_name, r.source_key, v.entity_name, v.detail_url,
+                      v.registration_no, v.district, v.upazila,
+                      v.office_address, v.factory_address
+               FROM external_index_record_versions v
+               JOIN external_index_records r ON r.index_record_id=v.index_record_id
+               WHERE v.run_id=?
+               ORDER BY v.index_version_id""",
+            (run_id,),
+        ).fetchall()
+        records = [
+            SourceIndexRecord(
+                source_name=str(row["source_name"]),
+                source_key=str(row["source_key"]),
+                entity_name=str(row["entity_name"]),
+                detail_url=str(row["detail_url"]),
+                registration_no=row["registration_no"],
+                district=row["district"],
+                upazila=row["upazila"],
+                office_address=row["office_address"],
+                factory_address=row["factory_address"],
+            )
+            for row in rows
+        ]
+        expected_segment = "member" if str(run["source_name"]) == "BGMEA" else "exporter"
+        quality = assess_index_quality(records, expected_segment=expected_segment)
+
+        page_counts = self.conn.execute(
+            """SELECT status, COUNT(*) AS n
+               FROM external_index_pages
+               WHERE run_id=? GROUP BY status""",
+            (run_id,),
+        ).fetchall()
+        status_counts = {str(row["status"]): int(row["n"]) for row in page_counts}
+        quality_dict = asdict(quality)
+        quality_dict["page_status_counts"] = status_counts
+
+        with self.conn:
+            self.conn.execute(
+                """UPDATE external_index_runs
+                   SET completed_at=?, status=?, quality_json=?,
+                       pages_staged=COALESCE(?, pages_staged),
+                       records_discovered=?,
+                       unique_keys=?
+                   WHERE run_id=?""",
+                (
+                    completed_at,
+                    "COMPLETED" if quality.valid and not status_counts.get("FAILED", 0) else "FAILED",
+                    json.dumps(quality_dict, sort_keys=True),
+                    status_counts.get("STAGED", 0),
+                    len(records),
+                    len({record.source_key for record in records}),
+                    run_id,
+                ),
+            )
+        return {
+            "run_id": run_id,
+            "source_name": str(run["source_name"]),
+            "quality": quality_dict,
+            "status": (
+                "COMPLETED"
+                if quality.valid and not status_counts.get("FAILED", 0)
+                else "FAILED"
+            ),
+        }
+
+    def _index_candidate_records(
+        self,
+        source_name: str,
+        run_id: int,
+    ) -> list[CandidateRecord]:
+        rows = self.conn.execute(
+            """WITH latest AS (
+                   SELECT v.*,
+                          ROW_NUMBER() OVER(
+                              PARTITION BY v.index_record_id
+                              ORDER BY v.observed_at DESC, v.index_version_id DESC
+                          ) AS rn
+                   FROM external_index_record_versions v
+                   WHERE v.run_id=?
+               )
+               SELECT r.index_record_id, r.source_name, r.source_key,
+                      l.entity_name, l.detail_url, l.district, l.upazila,
+                      l.factory_address
+               FROM latest l
+               JOIN external_index_records r ON r.index_record_id=l.index_record_id
+               WHERE l.rn=1 AND r.source_name=?
+               ORDER BY r.index_record_id""",
+            (run_id, source_name.upper()),
+        ).fetchall()
+        return [
+            CandidateRecord(
+                external_record_id=int(row["index_record_id"]),
+                payload=ExternalRecordPayload(
+                    source_name=str(row["source_name"]),
+                    external_key=str(row["source_key"]),
+                    entity_name=str(row["entity_name"]),
+                    site_text=row["factory_address"],
+                    district=row["district"],
+                    upazila=row["upazila"],
+                    source_url=str(row["detail_url"]),
+                    source_updated_at_raw=None,
+                    source_fields={},
+                ),
+            )
+            for row in rows
+        ]
+
+    def plan_external_detail_requests_from_index(
+        self,
+        validation_label: str,
+        source_name: str,
+        run_id: int,
+        *,
+        planned_at: str,
+        max_candidates: int = 5,
+    ) -> dict[str, int]:
+        """Use the staged directory index to fetch only plausible detail records."""
+        source_name = source_name.upper()
+        run = self.conn.execute(
+            """SELECT source_name, status FROM external_index_runs WHERE run_id=?""",
+            (run_id,),
+        ).fetchone()
+        if run is None or str(run["source_name"]) != source_name:
+            raise ValueError("source-index run does not match requested source")
+        if run["status"] != "COMPLETED":
+            raise ValueError("source-index run must pass QC before detail requests are planned")
+
+        targets = self.conn.execute(
+            """SELECT dife_public_id
+               FROM enrichment_targets
+               WHERE validation_label=? AND source_name=? AND eligible=1
+               ORDER BY dife_public_id""",
+            (validation_label, source_name),
+        ).fetchall()
+        if not targets:
+            raise ValueError("no eligible enrichment targets are planned")
+
+        index_records = self._index_candidate_records(source_name, run_id)
+        block_index = CandidateBlockIndex.build(index_records)
+        by_id = {record.external_record_id: record for record in index_records}
+
+        total_target_links = 0
+        unique_request_ids: set[int] = set()
+        no_candidate_targets = 0
+
+        for target in targets:
+            public_id = int(target["dife_public_id"])
+            dife = self._dife_match_record(validation_label, public_id)
+            blocked = block_index.records_for(dife)
+            signals = shortlist_candidates(
+                dife,
+                blocked,
+                max_candidates=max_candidates,
+            )
+            if not signals:
+                no_candidate_targets += 1
+                continue
+
+            with self.conn:
+                for position, signal in enumerate(signals, start=1):
+                    record = by_id[signal.external_record_id]
+                    self.conn.execute(
+                        """INSERT INTO external_detail_requests(
+                               source_name, source_key, detail_url, status, planned_at
+                           ) VALUES(?,?,?,?,?)
+                           ON CONFLICT(source_name, source_key, detail_url)
+                           DO NOTHING""",
+                        (
+                            source_name,
+                            record.payload.external_key,
+                            record.payload.source_url,
+                            "PLANNED",
+                            planned_at,
+                        ),
+                    )
+                    request_id = int(
+                        self.conn.execute(
+                            """SELECT request_id FROM external_detail_requests
+                               WHERE source_name=? AND source_key=? AND detail_url=?""",
+                            (
+                                source_name,
+                                record.payload.external_key,
+                                record.payload.source_url,
+                            ),
+                        ).fetchone()[0]
+                    )
+                    self.conn.execute(
+                        """INSERT OR REPLACE INTO external_detail_request_targets(
+                               request_id, validation_label, dife_public_id,
+                               index_record_id, shortlist_position, priority_class
+                           ) VALUES(?,?,?,?,?,?)""",
+                        (
+                            request_id,
+                            validation_label,
+                            public_id,
+                            signal.external_record_id,
+                            position,
+                            str(signal.priority),
+                        ),
+                    )
+                    unique_request_ids.add(request_id)
+                    total_target_links += 1
+
+        return {
+            "eligible_targets": len(targets),
+            "index_records": len(index_records),
+            "unique_detail_requests": len(unique_request_ids),
+            "target_candidate_links": total_target_links,
+            "no_candidate_targets": no_candidate_targets,
+        }
+
+    def external_detail_requests(
+        self,
+        source_name: str,
+        *,
+        status: str = "PLANNED",
+    ) -> list[dict[str, object]]:
+        rows = self.conn.execute(
+            """SELECT request_id, source_name, source_key, detail_url, status,
+                      planned_at, resolved_at, external_record_id, error_message
+               FROM external_detail_requests
+               WHERE source_name=? AND status=?
+               ORDER BY request_id""",
+            (source_name.upper(), status),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_external_detail_fetched(
+        self,
+        request_id: int,
+        *,
+        external_record_id: int,
+        resolved_at: str,
+    ) -> None:
+        cursor = self.conn.execute(
+            """UPDATE external_detail_requests
+               SET status='FETCHED', resolved_at=?, external_record_id=?,
+                   error_message=NULL
+               WHERE request_id=? AND status='PLANNED'""",
+            (resolved_at, external_record_id, request_id),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("external detail request is not PLANNED")
+        self.conn.commit()
 
     def counts(self) -> dict[str, int]:
         return {
