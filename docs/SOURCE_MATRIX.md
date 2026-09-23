@@ -1,6 +1,6 @@
 # External enrichment source matrix — v1.3
 
-Verified against public pages on 2026-09-23. These are source capabilities, not guaranteed coverage rates for the DIFE universe.
+Verified against public pages on 2026-09-24. These are source capabilities, not guaranteed coverage rates for the DIFE universe.
 
 | Source | Public fields demonstrated | Intended linkage level | Stable key rule | Refresh approach | Current production gate |
 |---|---|---|---|---|---|
@@ -18,3 +18,19 @@ Verified against public pages on 2026-09-23. These are source capabilities, not 
 4. BEPZA zone membership does not by itself establish a one-to-one DIFE site match.
 5. DoE environmental category is an official search observation. A current clearance flag requires certificate verification, not merely search presence.
 6. Missing external records remain missing; no negative status is inferred from a failed or absent match.
+
+
+## Geography and exposure sources
+
+| Source | Public fields demonstrated | Role | Geographic linkage | Current production gate |
+|---|---|---|---|---|
+| BBS geocodes | official geographic codes down to union/ward level; district/upazila codes and names are also published in census community reports | canonical administrative geography | exact English/Bangla canonical names plus reviewed aliases | normalized staging adapter implemented; full current crosswalk still to be staged privately |
+| DDM AWARE Risk Information | division, district, climate zone, Hazard Exposure, Vulnerability, Lack of Coping Capacity, Risk | first-order district disaster-risk context | DDM district → canonical BBS district → DIFE establishment geography | staged HTML parser and BBS-linked adapter implemented; real 64-district mapping audit still pending |
+
+### Exposure interpretation rules
+
+1. DDM district categories remain source text; they are not converted to numeric scores.
+2. A district DDM observation becomes `DISTRICT_CONTEXT`, not a site-specific factory event.
+3. English/Bangla joins must resolve through canonical BBS geography or an explicitly approved alias.
+4. Unresolved or ambiguous geographies remain unresolved and are reported; they are never fuzzy-matched.
+5. BBS code-component composites such as `BBS:DIST:<division>:<district>` are project references built from BBS components, not a claim that BBS publishes that exact concatenated identifier.

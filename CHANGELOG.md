@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.25.0-dev — 2026-09-24
+
+- Added a BBS-backed administrative geography crosswalk for division, district and upazila names/codes.
+- Added exact English/Bangla canonical matching plus explicit source-specific aliases; no fuzzy geography matching.
+- Added canonical BBS composite geography references for cross-source joins.
+- Added the first real exposure-source adapter for the DDM AWARE district Risk Information table.
+- Preserved DDM Hazard Exposure, Vulnerability, Lack of Coping Capacity, Risk and Climate Zone as published text; no 1–5 conversion or proprietary risk score.
+- Added a DISASTER_RISK exposure domain and canonical geography metadata on exposure observations.
+- Added staged DDM import auditing with unresolved-geography reporting.
+- Added PostgreSQL migration parity and end-to-end tests joining English DDM geography to Bangla DIFE geography through BBS.
+- No full BBS geography extract or real DDM dataset is committed.
+
 ## v0.24.0-dev — 2026-09-24
 
 - Added scope-aware first-order spatial exposure observations for climate hazards, transport access, power-system context and environmental/regulatory evidence.
