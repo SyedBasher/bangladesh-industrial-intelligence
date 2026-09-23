@@ -10,6 +10,59 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 from .sampling import SECTOR_TARGETS
 
 
+class NationalSnapshotIntegrityError(RuntimeError):
+    """A fetched page cannot safely join the declared national snapshot."""
+
+
+class NationalSourceTotalDriftError(NationalSnapshotIntegrityError):
+    def __init__(self, *, page: int, expected: int | None, observed: int | None):
+        self.page = page
+        self.expected = expected
+        self.observed = observed
+        super().__init__(
+            f"source total drift on page {page}: expected {expected}, observed {observed}"
+        )
+
+
+class NationalDuplicatePublicIdError(NationalSnapshotIntegrityError):
+    def __init__(self, *, page: int, public_ids: Iterable[int]):
+        ids = tuple(sorted({int(value) for value in public_ids}))
+        self.page = page
+        self.public_ids = ids
+        super().__init__(
+            f"duplicate DIFE public ID(s) on/against page {page}: "
+            + ", ".join(str(value) for value in ids[:20])
+        )
+
+
+class NationalPageCardinalityError(NationalSnapshotIntegrityError):
+    def __init__(self, *, page: int, expected: int, observed: int):
+        self.page = page
+        self.expected = expected
+        self.observed = observed
+        super().__init__(
+            f"page {page} row count mismatch: expected {expected}, observed {observed}"
+        )
+
+
+def expected_records_on_page(
+    expected_total: int,
+    *,
+    page: int,
+    page_size: int,
+) -> int:
+    if expected_total <= 0:
+        raise ValueError("expected_total must be positive")
+    if page <= 0:
+        raise ValueError("page must be positive")
+    if page_size <= 0:
+        raise ValueError("page_size must be positive")
+    remaining = expected_total - (page - 1) * page_size
+    if remaining <= 0:
+        return 0
+    return min(page_size, remaining)
+
+
 @dataclass(frozen=True)
 class NationalPageRequest:
     page: int
