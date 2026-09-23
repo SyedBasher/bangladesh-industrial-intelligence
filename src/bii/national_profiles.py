@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections import Counter
+import json
+from pathlib import Path
 from typing import Iterable, Mapping
 
 from .national_product import assert_national_product_safe
@@ -335,3 +337,17 @@ def filter_registry_for_profile(
         )
     )
     return rows
+
+
+def write_national_profile_json(
+    profile: Mapping[str, object],
+    path: str | Path,
+) -> Path:
+    assert_national_product_safe(profile)
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(
+        json.dumps(dict(profile), ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    return destination
