@@ -12,6 +12,7 @@ from .national_product import assert_national_product_safe
 
 class ExposureDomain(StrEnum):
     CLIMATE_HAZARD = "CLIMATE_HAZARD"
+    DISASTER_RISK = "DISASTER_RISK"
     TRANSPORT_ACCESS = "TRANSPORT_ACCESS"
     POWER_SYSTEM = "POWER_SYSTEM"
     ENVIRONMENTAL_REGULATORY = "ENVIRONMENTAL_REGULATORY"
@@ -52,6 +53,9 @@ class ExposureObservation:
     source_vintage: str | None = None
     observed_at: str | None = None
     evidence_note: str | None = None
+    canonical_geo_ref: str | None = None
+    geography_match_type: str | None = None
+    source_geography_label: str | None = None
 
 
 def _norm(value: object) -> str:
@@ -141,6 +145,18 @@ def validate_exposure_observation(
             None if observation.get("evidence_note") is None
             else str(observation.get("evidence_note"))
         ),
+        canonical_geo_ref=(
+            None if observation.get("canonical_geo_ref") is None
+            else str(observation.get("canonical_geo_ref"))
+        ),
+        geography_match_type=(
+            None if observation.get("geography_match_type") is None
+            else str(observation.get("geography_match_type"))
+        ),
+        source_geography_label=(
+            None if observation.get("source_geography_label") is None
+            else str(observation.get("source_geography_label"))
+        ),
     )
 
 
@@ -155,8 +171,10 @@ def _attribution(scope: SpatialScope) -> ExposureAttribution:
 def link_exposure_observations(
     registry_rows: Iterable[Mapping[str, object]],
     observations: Iterable[Mapping[str, object]],
+    *,
+    geography_crosswalk: object | None = None,
 ) -> list[dict[str, object]]:
-    """Attach normalized exposure evidence using exact declared geography only."""
+    """Attach exposure evidence using exact geography or a reviewed canonical crosswalk."""
     registry = [dict(row) for row in registry_rows]
     by_ref = {
         str(row.get("establishment_ref") or ""): row
@@ -174,16 +192,50 @@ def link_exposure_observations(
             if target is not None:
                 matched = [target]
         elif obs.spatial_scope == SpatialScope.UPAZILA:
-            matched = [
-                row for row in registry
-                if _norm(row.get("district")) == _norm(obs.district)
-                and _norm(row.get("upazila")) == _norm(obs.upazila)
-            ]
+            if geography_crosswalk is not None and obs.canonical_geo_ref:
+                matched = []
+                for row in registry:
+                    district_name = str(row.get("district") or "")
+                    upazila_name = str(row.get("upazila") or "")
+                    if not district_name or not upazila_name:
+                        continue
+                    geo_match = geography_crosswalk.resolve_upazila(
+                        upazila_name,
+                        district=district_name,
+                        division=(
+                            None if row.get("division") is None
+                            else str(row.get("division"))
+                        ),
+                    )
+                    if geo_match.geo_ref == obs.canonical_geo_ref:
+                        matched.append(row)
+            else:
+                matched = [
+                    row for row in registry
+                    if _norm(row.get("district")) == _norm(obs.district)
+                    and _norm(row.get("upazila")) == _norm(obs.upazila)
+                ]
         elif obs.spatial_scope == SpatialScope.DISTRICT:
-            matched = [
-                row for row in registry
-                if _norm(row.get("district")) == _norm(obs.district)
-            ]
+            if geography_crosswalk is not None and obs.canonical_geo_ref:
+                matched = []
+                for row in registry:
+                    district_name = str(row.get("district") or "")
+                    if not district_name:
+                        continue
+                    geo_match = geography_crosswalk.resolve_district(
+                        district_name,
+                        division=(
+                            None if row.get("division") is None
+                            else str(row.get("division"))
+                        ),
+                    )
+                    if geo_match.geo_ref == obs.canonical_geo_ref:
+                        matched.append(row)
+            else:
+                matched = [
+                    row for row in registry
+                    if _norm(row.get("district")) == _norm(obs.district)
+                ]
 
         for row in matched:
             link = {
@@ -203,6 +255,9 @@ def link_exposure_observations(
                 "source_vintage": obs.source_vintage,
                 "observed_at": obs.observed_at,
                 "evidence_note": obs.evidence_note,
+                "canonical_geo_ref": obs.canonical_geo_ref,
+                "geography_match_type": obs.geography_match_type,
+                "source_geography_label": obs.source_geography_label,
                 "origin": "SOURCE_OBSERVATION",
             }
             assert_national_product_safe(link)
