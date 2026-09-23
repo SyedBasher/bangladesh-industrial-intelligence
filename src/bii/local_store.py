@@ -26,6 +26,13 @@ from .parsers import extract_public_id, parse_dife_detail, parse_dife_list_page
 from .policy import SourceAccessPolicy
 from .sampling import ValidationCandidate
 from .supplement import SupplementRequest
+from .validation_reporting import (
+    DetailComparisonRecord,
+    ValidationAnomaly,
+    ValidationReport,
+    build_validation_report,
+    report_as_dict,
+)
 
 
 _LOCAL_SCHEMA = """
@@ -214,6 +221,32 @@ CREATE TABLE IF NOT EXISTS detail_collection_runs (
     raw_directory TEXT NOT NULL,
     notes TEXT
 );
+
+
+CREATE TABLE IF NOT EXISTS validation_reports (
+    report_id INTEGER PRIMARY KEY,
+    validation_label TEXT NOT NULL,
+    checkpoint_n INTEGER NOT NULL,
+    generated_at TEXT NOT NULL,
+    report_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS validation_anomalies (
+    anomaly_id INTEGER PRIMARY KEY,
+    report_id INTEGER NOT NULL REFERENCES validation_reports(report_id),
+    dife_public_id INTEGER NOT NULL,
+    sequence_no INTEGER NOT NULL,
+    anomaly_type TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    list_value TEXT,
+    detail_value TEXT,
+    note TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS validation_report_checkpoint_idx
+    ON validation_reports(validation_label, checkpoint_n, generated_at DESC);
+CREATE INDEX IF NOT EXISTS validation_anomaly_type_idx
+    ON validation_anomalies(report_id, severity, anomaly_type);
 
 CREATE INDEX IF NOT EXISTS collection_run_checkpoint_idx
     ON detail_collection_runs(validation_label, checkpoint_n, started_at DESC);
@@ -1118,6 +1151,163 @@ class LocalValidationStore:
         if row is None:
             raise KeyError(f"collection run not found: {run_id}")
         return dict(row)
+
+
+    def detail_comparison_records(
+        self,
+        validation_label: str,
+        checkpoint_n: int,
+    ) -> list[DetailComparisonRecord]:
+        """Join frozen/list observations to the staged DIFE detail observations."""
+        rows = self.conn.execute(
+            """WITH latest_list AS (
+                   SELECT eo.*,
+                          ROW_NUMBER() OVER(
+                              PARTITION BY eo.dife_public_id
+                              ORDER BY eo.observed_at DESC, eo.observation_id DESC
+                          ) AS rn
+                   FROM establishment_observations eo
+               )
+               SELECT
+                   r.dife_public_id,
+                   r.sequence_no,
+                   v.sector_family,
+                   v.geography_group,
+                   r.status AS request_status,
+                   r.parser_valid,
+                   r.core_complete,
+                   ll.name AS list_name,
+                   ll.sector AS list_sector,
+                   ll.district AS list_district,
+                   ll.status AS list_status,
+                   ll.licence_class AS list_class,
+                   d.name_en AS detail_name_en,
+                   d.name_bn AS detail_name_bn,
+                   d.sector AS detail_sector,
+                   d.district AS detail_district,
+                   d.status AS detail_status,
+                   d.licence_class AS detail_class,
+                   d.establishment_type,
+                   d.licence_no,
+                   d.registration_no,
+                   d.worker_total,
+                   d.licence_expiry_raw
+               FROM detail_requests r
+               JOIN validation_sample v
+                 ON v.validation_label=r.validation_label
+                AND v.dife_public_id=r.dife_public_id
+               LEFT JOIN latest_list ll
+                 ON ll.dife_public_id=r.dife_public_id AND ll.rn=1
+               LEFT JOIN detail_observations d
+                 ON d.validation_label=r.validation_label
+                AND d.dife_public_id=r.dife_public_id
+                AND d.snapshot_id=r.staged_snapshot_id
+               WHERE r.validation_label=? AND r.sequence_no<=?
+               ORDER BY r.sequence_no""",
+            (validation_label, checkpoint_n),
+        ).fetchall()
+        return [
+            DetailComparisonRecord(
+                public_id=int(row["dife_public_id"]),
+                sequence_no=int(row["sequence_no"]),
+                sector_family=str(row["sector_family"]),
+                geography_group=str(row["geography_group"]),
+                request_status=str(row["request_status"]),
+                parser_valid=None if row["parser_valid"] is None else bool(row["parser_valid"]),
+                core_complete=None if row["core_complete"] is None else bool(row["core_complete"]),
+                list_name=row["list_name"],
+                list_sector=row["list_sector"],
+                list_district=row["list_district"],
+                list_status=row["list_status"],
+                list_class=row["list_class"],
+                detail_name_en=row["detail_name_en"],
+                detail_name_bn=row["detail_name_bn"],
+                detail_sector=row["detail_sector"],
+                detail_district=row["detail_district"],
+                detail_status=row["detail_status"],
+                detail_class=row["detail_class"],
+                establishment_type=row["establishment_type"],
+                licence_no=row["licence_no"],
+                registration_no=row["registration_no"],
+                worker_total=row["worker_total"],
+                licence_expiry_raw=row["licence_expiry_raw"],
+            )
+            for row in rows
+        ]
+
+    def generate_validation_report(
+        self,
+        validation_label: str,
+        checkpoint_n: int,
+        *,
+        generated_at: str,
+    ) -> tuple[int, ValidationReport, list[ValidationAnomaly]]:
+        records = self.detail_comparison_records(validation_label, checkpoint_n)
+        if not records:
+            raise ValueError(
+                f"no detail records available for report {validation_label!r} checkpoint {checkpoint_n}"
+            )
+        report, anomalies = build_validation_report(
+            records,
+            validation_label=validation_label,
+            checkpoint_n=checkpoint_n,
+            generated_at=generated_at,
+        )
+        with self.conn:
+            cursor = self.conn.execute(
+                """INSERT INTO validation_reports(
+                       validation_label, checkpoint_n, generated_at, report_json
+                   ) VALUES(?,?,?,?)""",
+                (
+                    validation_label,
+                    checkpoint_n,
+                    generated_at,
+                    json.dumps(report_as_dict(report), ensure_ascii=False, sort_keys=True),
+                ),
+            )
+            report_id = int(cursor.lastrowid)
+            self.conn.executemany(
+                """INSERT INTO validation_anomalies(
+                       report_id, dife_public_id, sequence_no, anomaly_type,
+                       severity, list_value, detail_value, note
+                   ) VALUES(?,?,?,?,?,?,?,?)""",
+                [
+                    (
+                        report_id,
+                        anomaly.public_id,
+                        anomaly.sequence_no,
+                        anomaly.anomaly_type,
+                        anomaly.severity,
+                        anomaly.list_value,
+                        anomaly.detail_value,
+                        anomaly.note,
+                    )
+                    for anomaly in anomalies
+                ],
+            )
+        return report_id, report, anomalies
+
+    def validation_anomalies_for_report(
+        self,
+        report_id: int,
+    ) -> list[dict[str, object]]:
+        rows = self.conn.execute(
+            """SELECT dife_public_id, sequence_no, anomaly_type, severity,
+                      list_value, detail_value, note
+               FROM validation_anomalies
+               WHERE report_id=?
+               ORDER BY
+                 CASE severity
+                   WHEN 'CRITICAL' THEN 1
+                   WHEN 'HIGH' THEN 2
+                   WHEN 'MEDIUM' THEN 3
+                   ELSE 4
+                 END,
+                 sequence_no,
+                 anomaly_type""",
+            (report_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def counts(self) -> dict[str, int]:
         return {
