@@ -1,4 +1,4 @@
-# Entity matching rules — v0.3
+# Entity matching rules — v1.3
 
 The matching layer separates **organization identity** from **establishment/site identity**. It does not publish a single opaque confidence score.
 
@@ -35,3 +35,13 @@ Name similarity is used only to produce a small review shortlist. The final matc
 - No external source overwrites DIFE official fields.
 - No expired DIFE licence is automatically converted to inactive/closed.
 - No missing external match is interpreted as “not an exporter”, “not a member”, or “no environmental clearance”.
+
+
+## Implemented v1.3 safeguards
+
+- Source eligibility is evaluated before matching; out-of-scope is not treated as a negative business fact.
+- BKMEA is capped at organization-level linkage by default.
+- EPB, BEPZA and DoE require site evidence before plant-level attributes can propagate.
+- BGMEA may support site-level linkage when its factory geography agrees with DIFE.
+- Address overlap is retained as an explicit component value rather than collapsed into a hidden score.
+- Every reviewed link stores the rule version and all component evidence.
