@@ -160,6 +160,7 @@ tbody tr:hover,tbody tr.selected{background:#f0f7f3}
     <nav class="nav">
       <a class="active" href="#overview">Overview</a>
       <a href="#national">National geography</a>
+      <a href="#profiles">District / sector profiles</a>
       <a href="#registry">Establishments</a>
       <a href="#sources">Source pipeline</a>
       <a href="#method">Methodology</a>
@@ -208,8 +209,8 @@ tbody tr:hover,tbody tr.selected{background:#f0f7f3}
         </div>
         <div class="card kpi">
           <div class="eyebrow">Current build</div>
-          <strong>v0.22</strong>
-          <span>Offline national ingest + dashboard feeds</span>
+          <strong>v0.23</strong>
+          <span>District + sector national profiles</span>
         </div>
       </div>
     </section>
@@ -222,7 +223,7 @@ tbody tr:hover,tbody tr.selected{background:#f0f7f3}
         </div>
       </div>
       <div class="grid pipeline">
-        <div class="card pipe"><div class="source">DIFE</div><div class="state">Live / archive / bulk routes ready</div></div>
+        <div class="card pipe"><div class="source">DIFE</div><div class="state">National profiles + drill-down ready</div></div>
         <div class="card pipe"><div class="source">BGMEA</div><div class="state">Index + detail ready</div></div>
         <div class="card pipe"><div class="source">EPB</div><div class="state">Index + detail ready</div></div>
         <div class="card pipe"><div class="source">BKMEA</div><div class="state">Adapter ready</div></div>
@@ -312,6 +313,40 @@ tbody tr:hover,tbody tr.selected{background:#f0f7f3}
       </div>
     </section>
 
+
+    <section class="section" id="profiles">
+      <div class="section-head">
+        <div>
+          <h2>District & sector profiles</h2>
+          <p>Interactive synthetic preview of the v1.0 national profile contracts.</p>
+        </div>
+        <span class="badge demo">SYNTHETIC PROFILE VIEW</span>
+      </div>
+
+      <div class="filters" style="grid-template-columns:180px minmax(220px,1fr)">
+        <select id="profileType" class="field">
+          <option value="district">District profile</option>
+          <option value="sector">Sector profile</option>
+        </select>
+        <select id="profileChoice" class="field"></select>
+      </div>
+
+      <div class="registry">
+        <div class="card" id="profileSummary"></div>
+        <div class="card table-card">
+          <div class="table-wrap">
+            <table>
+              <thead id="profileHead"></thead>
+              <tbody id="profileRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="small" style="margin-top:9px">
+        Profiles are built from the safe national dashboard and registry contracts. Exact national-registry coverage does not imply complete BGMEA, EPB, DoE or DIFE detail-page enrichment.
+      </div>
+    </section>
+
     <section class="section" id="registry">
       <div class="section-head">
         <div>
@@ -393,6 +428,66 @@ tbody tr:hover,tbody tr.selected{background:#f0f7f3}
 </div>
 
 <script>
+const demoDistrictProfiles={
+  "Demo District A":{
+    establishments:"3,004",share:"18.4%",mapping:"96.8%",upazilas:"7",
+    concentration:"Largest 3 sectors: 76.2%",drill:"3,004 registry rows",
+    rows:[
+      ["RMG & textiles","1,240","41.3%","18.2%","1.64"],
+      ["Food & agro","710","23.6%","15.4%","1.18"],
+      ["Engineering & materials","340","11.3%","8.1%","0.72"]
+    ]
+  },
+  "Demo District B":{
+    establishments:"2,231",share:"13.7%",mapping:"98.1%",upazilas:"6",
+    concentration:"Largest 3 sectors: 68.5%",drill:"2,231 registry rows",
+    rows:[
+      ["Food & agro","620","27.8%","12.4%","1.29"],
+      ["RMG & textiles","510","22.9%","7.5%","0.91"],
+      ["Engineering & materials","398","17.8%","9.4%","1.11"]
+    ]
+  },
+  "Demo District C":{
+    establishments:"1,334",share:"8.2%",mapping:"94.6%",upazilas:"5",
+    concentration:"Largest 3 sectors: 61.7%",drill:"1,334 registry rows",
+    rows:[
+      ["Leather & footwear","215","16.1%","21.7%","2.05"],
+      ["Food & agro","330","24.7%","6.6%","1.15"],
+      ["Other manufacturing","278","20.8%","8.9%","1.32"]
+    ]
+  }
+};
+
+const demoSectorProfiles={
+  "RMG & textiles":{
+    establishments:"6,824",share:"41.9%",districts:"34",hhi:"0.118",
+    concentration:"Largest 3 districts: 52.6%",drill:"6,824 registry rows",
+    rows:[
+      ["Demo District A","1,240","18.2%","41.3%","1.64"],
+      ["Demo District B","510","7.5%","22.9%","0.91"],
+      ["Demo District D","460","6.7%","38.8%","1.47"]
+    ]
+  },
+  "Food & agro":{
+    establishments:"5,012",share:"30.8%",districts:"51",hhi:"0.071",
+    concentration:"Largest 3 districts: 38.4%",drill:"5,012 registry rows",
+    rows:[
+      ["Demo District A","710","14.2%","23.6%","1.18"],
+      ["Demo District B","620","12.4%","27.8%","1.29"],
+      ["Demo District C","330","6.6%","24.7%","1.15"]
+    ]
+  },
+  "Leather & footwear":{
+    establishments:"991",share:"6.1%",districts:"18",hhi:"0.164",
+    concentration:"Largest 3 districts: 59.3%",drill:"991 registry rows",
+    rows:[
+      ["Demo District C","215","21.7%","16.1%","2.05"],
+      ["Demo District E","194","19.6%","13.4%","1.72"],
+      ["Demo District A","122","12.3%","4.1%","0.67"]
+    ]
+  }
+};
+
 const records=[
   {
     id:"DEMO-001",name:"Example Knitwear Ltd.",sector:"RMG & textiles",district:"Gazipur",
@@ -508,8 +603,7 @@ function render(){
   }));
   renderDetail(data.find(r=>r.id===selected));
 }
-[search,sector,district].forEach(el=>el.addEventListener("input",render));
-render();
+[search,sector,district].forEach(el=>el.addEventListener("input",render));\n\nconst profileType=document.getElementById("profileType");\nconst profileChoice=document.getElementById("profileChoice");\nconst profileSummary=document.getElementById("profileSummary");\nconst profileHead=document.getElementById("profileHead");\nconst profileRows=document.getElementById("profileRows");\n\nfunction profileDataset(){\n  return profileType.value==="district" ? demoDistrictProfiles : demoSectorProfiles;\n}\nfunction populateProfileChoices(){\n  const data=profileDataset();\n  profileChoice.innerHTML=Object.keys(data).map(function(name){return "<option>"+name+"</option>";}).join("");\n  renderProfile();\n}\nfunction renderProfile(){\n  const data=profileDataset();\n  const name=profileChoice.value || Object.keys(data)[0];\n  const p=data[name];\n  if(!p) return;\n  const isDistrict=profileType.value==="district";\n  if(isDistrict){\n    profileSummary.innerHTML="<div class=\"eyebrow\">District profile · synthetic</div>"+\n      "<h3 style=\"margin:6px 0 14px\">"+name+"</h3>"+\n      "<div class=\"fact-grid\">"+\n      "<div class=\"fact\"><label>Establishments</label><strong>"+p.establishments+"</strong></div>"+\n      "<div class=\"fact\"><label>National share</label><strong>"+p.share+"</strong></div>"+\n      "<div class=\"fact\"><label>Sector mapping coverage</label><strong>"+p.mapping+"</strong></div>"+\n      "<div class=\"fact\"><label>Upazilas represented</label><strong>"+p.upazilas+"</strong></div>"+\n      "<div class=\"fact\"><label>Concentration</label><strong>"+p.concentration+"</strong></div>"+\n      "<div class=\"fact\"><label>Drill-down</label><strong>"+p.drill+"</strong></div></div>"+\n      "<div class=\"rule\"></div><div class=\"small\">Location quotient above 1 means a sector has a larger share of establishments in this district than it has nationally. It is not a competitiveness score.</div>";\n    profileHead.innerHTML="<tr><th>Sector family</th><th>Establishments</th><th>Share of district</th><th>Share of national sector</th><th>LQ</th></tr>";\n  }else{\n    profileSummary.innerHTML="<div class=\"eyebrow\">Sector profile · synthetic</div>"+\n      "<h3 style=\"margin:6px 0 14px\">"+name+"</h3>"+\n      "<div class=\"fact-grid\">"+\n      "<div class=\"fact\"><label>Establishments</label><strong>"+p.establishments+"</strong></div>"+\n      "<div class=\"fact\"><label>National share</label><strong>"+p.share+"</strong></div>"+\n      "<div class=\"fact\"><label>Districts represented</label><strong>"+p.districts+"</strong></div>"+\n      "<div class=\"fact\"><label>District HHI</label><strong>"+p.hhi+"</strong></div>"+\n      "<div class=\"fact\"><label>Concentration</label><strong>"+p.concentration+"</strong></div>"+\n      "<div class=\"fact\"><label>Drill-down</label><strong>"+p.drill+"</strong></div></div>"+\n      "<div class=\"rule\"></div><div class=\"small\">HHI and largest-district shares are shown with their component district shares. No composite sector score is produced.</div>";\n    profileHead.innerHTML="<tr><th>District</th><th>Establishments</th><th>Share of national sector</th><th>Share of district</th><th>LQ</th></tr>";\n  }\n  profileRows.innerHTML=p.rows.map(function(row){\n    return "<tr>"+row.map(function(cell,i){return "<td>"+(i===4?"<strong>"+cell+"</strong>":cell)+"</td>";}).join("")+"</tr>";\n  }).join("");\n}\nprofileType.addEventListener("change",populateProfileChoices);\nprofileChoice.addEventListener("change",renderProfile);\npopulateProfileChoices();\nrender();
 </script>
 </body>
 </html>
