@@ -2898,6 +2898,42 @@ class LocalValidationStore:
             raise ValueError("external detail request is not PLANNED")
         self.conn.commit()
 
+
+    def mark_external_detail_failed(
+        self,
+        request_id: int,
+        *,
+        resolved_at: str,
+        error_message: str,
+    ) -> None:
+        cursor = self.conn.execute(
+            """UPDATE external_detail_requests
+               SET status='FAILED', resolved_at=?, external_record_id=NULL,
+                   error_message=?
+               WHERE request_id=? AND status='PLANNED'""",
+            (resolved_at, error_message, request_id),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("external detail request is not PLANNED")
+        self.conn.commit()
+
+    def external_detail_target_status_counts(
+        self,
+        validation_label: str,
+        source_name: str,
+    ) -> dict[str, int]:
+        rows = self.conn.execute(
+            """SELECT r.status, COUNT(DISTINCT r.request_id) AS n
+               FROM external_detail_requests r
+               JOIN external_detail_request_targets t
+                 ON t.request_id=r.request_id
+               WHERE t.validation_label=? AND r.source_name=?
+               GROUP BY r.status
+               ORDER BY r.status""",
+            (validation_label, source_name.upper()),
+        ).fetchall()
+        return {str(row["status"]): int(row["n"]) for row in rows}
+
     def counts(self) -> dict[str, int]:
         return {
             table: int(self.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
